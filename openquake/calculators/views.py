@@ -18,6 +18,7 @@
 from __future__ import division
 import io
 import ast
+import math
 import os.path
 import numbers
 import operator
@@ -38,6 +39,7 @@ from openquake.hazardlib.gsim.base import ContextMaker
 from openquake.commonlib import util, source, calc
 from openquake.commonlib.writers import (
     build_header, scientificformat, write_csv, FIVEDIGITS)
+from openquake.calculators import getters
 
 FLOAT = (float, numpy.float32, numpy.float64, decimal.Decimal)
 INT = (int, numpy.int32, numpy.uint32, numpy.int64, numpy.uint64)
@@ -242,6 +244,9 @@ def view_ruptures_per_trt(token, dstore):
     eff_ruptures = 0
     tot_ruptures = 0
     csm_info = dstore['csm_info']
+    oq = dstore['oqparam']
+    num_sites = len(dstore['sitecol'])
+    num_tiles = math.ceil(num_sites / oq.sites_per_tile)
     for i, sm in enumerate(csm_info.source_models):
         for src_group in sm.src_groups:
             trt = source.capitalize(src_group.trt)
@@ -256,6 +261,8 @@ def view_ruptures_per_trt(token, dstore):
             ('#eff_ruptures', eff_ruptures),
             ('#tot_ruptures', tot_ruptures),
             ('#tot_weight', csm_info.tot_weight)]
+    if num_tiles > 1:
+        rows.insert(0, ('#tiles', num_tiles))
     if len(tbl) > 1:
         summary = '\n\n' + rst_table(rows)
     else:
@@ -334,7 +341,7 @@ def avglosses_data_transfer(token, dstore):
     """
     oq = dstore['oqparam']
     N = len(dstore['assetcol'])
-    R = len(dstore['realizations'])
+    R = dstore['csm_info'].get_num_rlzs()
     L = len(dstore.get_attr('composite_risk_model', 'loss_types'))
     I = oq.insured_losses + 1
     ct = oq.concurrent_tasks
@@ -378,7 +385,7 @@ def view_portfolio_loss(token, dstore):
     """
     oq = dstore['oqparam']
     loss_dt = oq.loss_dt()
-    R = len(dstore['realizations'])
+    R = dstore['csm_info'].get_num_rlzs()
     by_rlzi = group_array(dstore['agg_loss_table'].value, 'rlzi')
     data = numpy.zeros(R, loss_dt)
     rlzids = [str(r) for r in range(R)]
@@ -415,7 +422,7 @@ def sum_table(records):
 @view.add('mean_avg_losses')
 def view_mean_avg_losses(token, dstore):
     dt = dstore['oqparam'].loss_dt()
-    weights = dstore['realizations']['weight']
+    weights = dstore['csm_info'].rlzs['weight']
     array = dstore['avg_losses-rlzs'].value  # shape (N, R)
     if len(weights) == 1:  # one realization
         mean = array[:, 0]
@@ -464,7 +471,7 @@ def view_assetcol(token, dstore):
 
 @view.add('ruptures_events')
 def view_ruptures_events(token, dstore):
-    num_ruptures = sum(len(v) for v in dstore['ruptures'].values())
+    num_ruptures = len(dstore['ruptures'])
     num_events = len(dstore['events'])
     mult = round(num_events / num_ruptures, 3)
     lst = [('Total number of ruptures', num_ruptures),
@@ -517,7 +524,8 @@ def stats(name, array, *extras):
     :param name: a descriptive string
     :returns: (name, mean, std, min, max, len)
     """
-    return (name, numpy.mean(array), numpy.std(array, ddof=1),
+    std = numpy.nan if len(array) == 1 else numpy.std(array, ddof=1)
+    return (name, numpy.mean(array), std,
             numpy.min(array), numpy.max(array), len(array)) + extras
 
 
@@ -669,7 +677,7 @@ def view_flat_hcurves(token, dstore):
     """
     oq = dstore['oqparam']
     nsites = len(dstore['sitecol'])
-    mean = calc.PmapGetter(dstore).get_mean()
+    mean = getters.PmapGetter(dstore).get_mean()
     array = calc.convert_to_array(mean, nsites, oq.imtls)
     res = numpy.zeros(1, array.dtype)
     for name in array.dtype.names:
@@ -689,7 +697,7 @@ def view_flat_hmaps(token, dstore):
     assert oq.poes
     nsites = len(dstore['sitecol'])
     pdic = DictArray({imt: oq.poes for imt in oq.imtls})
-    mean = calc.PmapGetter(dstore).get_mean()
+    mean = getters.PmapGetter(dstore).get_mean()
     hmaps = calc.make_hmap(mean, oq.imtls, oq.poes)
     array = calc.convert_to_array(hmaps, nsites, pdic)
     res = numpy.zeros(1, array.dtype)
@@ -760,8 +768,13 @@ def view_elt(token, dstore):
     Display the event loss table averaged by event
     """
     oq = dstore['oqparam']
+    R = len(dstore['csm_info'].rlzs)
     dic = group_array(dstore['agg_loss_table'].value, 'rlzi')
-    tbl = [oq.loss_dt().names]
-    for rlzi in sorted(dic):
-        tbl.append(dic[rlzi]['loss'].mean(axis=0))
-    return rst_table(tbl)
+    header = oq.loss_dt().names
+    tbl = []
+    for rlzi in range(R):
+        if rlzi in dic:
+            tbl.append(dic[rlzi]['loss'].mean(axis=0))
+        else:
+            tbl.append([0.] * len(header))
+    return rst_table(tbl, header)

@@ -30,7 +30,7 @@ from openquake.hazardlib.calc.hazard_curve import (
 from openquake.hazardlib.stats import compute_pmap_stats
 from openquake.hazardlib import source
 from openquake.hazardlib.calc.filters import SourceFilter
-from openquake.commonlib import calc
+from openquake.calculators import getters
 from openquake.calculators import base
 
 U16 = numpy.uint16
@@ -98,7 +98,7 @@ class PSHACalculator(base.HazardCalculator):
             for grp_id in pmap:
                 if pmap[grp_id]:
                     acc[grp_id] |= pmap[grp_id]
-            for src_id, nsites, srcweight, calc_time in pmap.calc_times:
+            for src_id, srcweight, nsites, calc_time in pmap.calc_times:
                 srcid = src_id.split(':', 1)[0]
                 info = self.csm.infos[srcid]
                 info.calc_time += calc_time
@@ -230,7 +230,7 @@ def fix_ones(pmap):
 
 def build_hcurves_and_stats(pgetter, hstats, monitor):
     """
-    :param pgetter: an :class:`openquake.commonlib.calc.PmapGetter`
+    :param pgetter: an :class:`openquake.commonlib.getters.PmapGetter`
     :param hstats: a list of pairs (statname, statfunc)
     :param monitor: instance of Monitor
     :returns: a dictionary kind -> ProbabilityMap
@@ -239,9 +239,13 @@ def build_hcurves_and_stats(pgetter, hstats, monitor):
     used to specify the kind of output.
     """
     with monitor('combine pmaps'):
-        pmaps = pgetter.get_pmaps(pgetter.sids)
-    if sum(len(pmap) for pmap in pmaps) == 0:  # no data
-        return {}
+        pgetter.init()  # if not already initialized
+        try:
+            pmaps = pgetter.get_pmaps(pgetter.sids)
+        except IndexError:  # no data
+            return {}
+        if sum(len(pmap) for pmap in pmaps) == 0:  # no data
+            return {}
     pmap_by_kind = {}
     for kind, stat in hstats:
         with monitor('compute ' + kind):
@@ -265,15 +269,16 @@ class ClassicalCalculator(PSHACalculator):
         if 'poes' not in self.datastore:  # for short report
             return
         oq = self.oqparam
-        num_rlzs = len(self.datastore['realizations'])
+        num_rlzs = self.datastore['csm_info'].get_num_rlzs()
         if num_rlzs == 1:  # no stats to compute
             return {}
         elif not oq.hazard_stats():
             if oq.hazard_maps or oq.uniform_hazard_spectra:
-                raise ValueError('The job.ini says that no statistics should '
-                                 'be computed, but then there is no output!')
-            else:
-                return {}
+                logging.warn('mean_hazard_curves was false in the job.ini, '
+                             'so no outputs were generated.\nYou can compute '
+                             'the statistics without repeating the calculation'
+                             ' with the --hc option')
+            return {}
         # initialize datasets
         N = len(self.sitecol)
         L = len(oq.imtls.array)
@@ -292,16 +297,27 @@ class ClassicalCalculator(PSHACalculator):
         self.datastore.flush()
 
         with self.monitor('sending pmaps', autoflush=True, measuremem=True):
-            monitor = self.monitor('build_hcurves_and_stats')
-            hstats = oq.hazard_stats()
-            allargs = (
-                (calc.PmapGetter(self.datastore, tile.sids, self.rlzs_assoc),
-                 hstats, monitor)
-                for tile in self.sitecol.split_in_tiles(oq.concurrent_tasks))
             ires = parallel.Starmap(
-                self.core_task.__func__, allargs).submit_all()
+                self.core_task.__func__, self.gen_args()
+            ).submit_all()
         nbytes = ires.reduce(self.save_hcurves)
         return nbytes
+
+    def gen_args(self):
+        """
+        :yields: pgetter, hstats, monitor
+        """
+        monitor = self.monitor('build_hcurves_and_stats')
+        hstats = self.oqparam.hazard_stats()
+        parent = self.can_read_parent()
+        if parent is None:
+            parent = self.datastore
+        for t in self.sitecol.split_in_tiles(self.oqparam.concurrent_tasks):
+            pgetter = getters.PmapGetter(parent, t.sids, self.rlzs_assoc)
+            if parent is self.datastore:  # read now, not in the workers
+                logging.info('Reading PoEs on %d sites', len(t))
+                pgetter.init()
+            yield pgetter, hstats, monitor
 
     def save_hcurves(self, acc, pmap_by_kind):
         """

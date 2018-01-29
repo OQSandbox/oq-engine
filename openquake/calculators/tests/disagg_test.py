@@ -22,7 +22,7 @@ import numpy
 from nose.plugins.attrib import attr
 from openquake.baselib.general import writetmp
 from openquake.hazardlib.probability_map import combine
-from openquake.commonlib import calc
+from openquake.calculators import getters
 from openquake.calculators.views import view
 from openquake.calculators.export import export
 from openquake.calculators.tests import CalculatorTestCase
@@ -62,7 +62,8 @@ class DisaggregationTestCase(CalculatorTestCase):
             fmt='csv')
 
         # disaggregation by source group
-        pgetter = calc.PmapGetter(self.calc.datastore)
+        pgetter = getters.PmapGetter(self.calc.datastore)
+        pgetter.init()
         pmaps = []
         for grp in sorted(pgetter.dstore['poes']):
             pmaps.append(pgetter.get_mean(grp))
@@ -93,7 +94,7 @@ class DisaggregationTestCase(CalculatorTestCase):
         self.assertEqual(str(ctx.exception), '''\
 You are trying to disaggregate for poe=0.1.
 However the source model #0, 'source_model_test_complex.xml',
-produces at most probabilities of 0.0362320992703 for rlz=#0, IMT=PGA.
+produces at most probabilities of 0.0362321 for rlz=#0, IMT=PGA.
 The disaggregation PoE is too big or your model is wrong,
 producing too small PoEs.''')
 

@@ -18,7 +18,8 @@
 import numpy
 from openquake.baselib.python3compat import decode
 from openquake.commonlib import writers
-from openquake.risklib import riskinput, scientific
+from openquake.calculators import getters
+from openquake.risklib import scientific
 
 
 def get_loss_builder(dstore):
@@ -27,7 +28,7 @@ def get_loss_builder(dstore):
     :returns: a LossesByPeriodBuilder instance
     """
     oq = dstore['oqparam']
-    weights = dstore['realizations']['weight']
+    weights = dstore['csm_info'].rlzs['weight']
     eff_time = oq.investigation_time * oq.ses_per_logic_tree_path
     num_events = dstore['gmdata']['events']
     periods = oq.return_periods or scientific.return_periods(
@@ -67,7 +68,7 @@ class LossCurveExporter(object):
         self.str2asset = {arefs[asset.idx]: asset for asset in self.assetcol}
         self.asset_refs = self.dstore['asset_refs'].value
         self.loss_types = dstore.get_attr('composite_risk_model', 'loss_types')
-        self.R = len(dstore['realizations'])
+        self.R = dstore['csm_info'].get_num_rlzs()
 
     def parse(self, what):
         """
@@ -159,7 +160,7 @@ class LossCurveExporter(object):
 
         # otherwise event_based
         avalues = self.assetcol.values(aids)
-        lrgetter = riskinput.LossRatiosGetter(self.dstore, aids)
+        lrgetter = getters.LossRatiosGetter(self.dstore, aids)
         build = self.builder.build_rlz
         if key.startswith('rlz-'):
             rlzi = int(key[4:])
