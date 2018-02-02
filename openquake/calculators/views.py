@@ -534,9 +534,10 @@ def view_num_units(token, dstore):
     """
     Display the number of units by taxonomy
     """
+    taxo = dstore['assetcol/tagcol/taxonomy'].value
     counts = collections.Counter()
     for asset in dstore['assetcol']:
-        counts[asset.taxonomy] += asset.number
+        counts[taxo[asset.taxonomy]] += asset.number
     data = sorted(counts.items())
     data.append(('*ALL*', sum(d[1] for d in data)))
     return rst_table(data, header=['taxonomy', 'num_units'])
@@ -569,7 +570,7 @@ def view_required_params_per_trt(token, dstore):
     """
     csm_info = dstore['csm_info']
     tbl = []
-    for grp_id, trt in sorted(csm_info.grp_trt().items()):
+    for grp_id, trt in sorted(csm_info.grp_by("trt").items()):
         gsims = csm_info.gsim_lt.get_gsims(trt)
         maker = ContextMaker(gsims)
         distances = sorted(maker.REQUIRES_DISTANCES)
@@ -778,3 +779,19 @@ def view_elt(token, dstore):
         else:
             tbl.append([0.] * len(header))
     return rst_table(tbl, header)
+
+
+@view.add('pmap')
+def view_pmap(token, dstore):
+    """
+    Display the mean ProbabilityMap associated to a given source group name
+    """
+    name = token.split(':')[1]  # called as pmap:name
+    pmap = {}
+    pgetter = getters.PmapGetter(dstore)
+    pgetter.init()
+    for grp, dset in dstore['poes'].items():
+        if dset.attrs['name'] == name:
+            pmap = pgetter.get_mean(grp)
+            break
+    return str(pmap)
