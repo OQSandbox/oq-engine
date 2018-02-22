@@ -191,3 +191,8 @@ class MMI(_IMT):
     of an earthquake in terms of its effects on the earth's surface
     and on humans and their structures.
     """
+
+class PGDf(_IMT):
+    """
+    Permanent ground defomation (m)
+    """
