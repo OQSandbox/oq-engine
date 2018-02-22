@@ -77,8 +77,7 @@ PRECALC_MAP = dict(
     event_based=['event_based', 'event_based_rupture', 'ebrisk',
                  'event_based_risk', 'ucerf_rupture'],
     event_based_risk=['event_based', 'event_based_rupture', 'ucerf_rupture',
-                      'event_based_risk'],
-    gmf_ebrisk=['event_based', 'ucerf_hazard'],
+                      'event_based_risk', 'ucerf_hazard'],
     ucerf_classical=['ucerf_psha'],
     ucerf_hazard=['ucerf_rupture'])
 
@@ -128,14 +127,6 @@ class BaseCalculator(with_metaclass(abc.ABCMeta)):
     performance = datastore.persistent_attribute('performance')
     pre_calculator = None  # to be overridden
     is_stochastic = False  # True for scenario and event based calculators
-
-    @property
-    def taxonomies(self):
-        """
-        :returns: the set of available taxonomies
-        """
-        return set(taxo for taxo in self.assetcol.tagcol.taxonomies()
-                   if taxo != '?')
 
     def __init__(self, oqparam, monitor=Monitor(), calc_id=None):
         self._monitor = monitor
@@ -477,7 +468,7 @@ class HazardCalculator(BaseCalculator):
     def read_exposure(self):
         """
         Read the exposure, the riskmodel and update the attributes .exposure,
-        .sitecol, .assets_by_site, .taxonomies.
+        .sitecol, .assets_by_site
         """
         logging.info('Reading the exposure')
         with self.monitor('reading exposure', autoflush=True):
@@ -513,7 +504,7 @@ class HazardCalculator(BaseCalculator):
         The riskmodel can be empty for hazard calculations.
         Save the loss ratios (if any) in the datastore.
         """
-        logging.info('Reading the risk model')
+        logging.info('Reading the risk model if present')
         self.riskmodel = rm = readinput.get_risk_model(self.oqparam)
         if not self.riskmodel:  # can happen only in a hazard calculation
             return
@@ -580,7 +571,8 @@ class HazardCalculator(BaseCalculator):
                         oq.time_event, oq_hazard.time_event))
 
         if self.oqparam.job_type == 'risk':
-            taxonomies = set(self.taxonomies)
+            taxonomies = set(taxo for taxo in self.assetcol.tagcol.taxonomy
+                             if taxo != '?')
 
             # check that we are covering all the taxonomies in the exposure
             missing = taxonomies - set(self.riskmodel.taxonomies)
@@ -628,6 +620,8 @@ class HazardCalculator(BaseCalculator):
         self.csm.info.update_eff_ruptures(
             partial(self.count_eff_ruptures, acc))
         self.rlzs_assoc = self.csm.info.get_rlzs_assoc(self.oqparam.sm_lt_path)
+        if not self.rlzs_assoc:
+            raise RuntimeError('Empty logic tree: too much filtering?')
         self.datastore['csm_info'] = self.csm.info
         if 'source_info' in self.datastore:
             # the table is missing for UCERF, we should fix that
@@ -656,17 +650,18 @@ class RiskCalculator(HazardCalculator):
                 self.assetcol, num_ruptures,
                 oq.master_seed, oq.asset_correlation)
 
-    def build_riskinputs(self, kind, eps=None, eids=None):
+    def build_riskinputs(self, kind, eps=None, num_events=0):
         """
         :param kind:
             kind of hazard getter, can be 'poe' or 'gmf'
         :param eps:
             a matrix of epsilons (or None)
-        :param eids:
-            an array of event IDs (or None)
+        :param num_events:
+            how many events there are
         :returns:
             a list of RiskInputs objects, sorted by IMT.
         """
+        logging.info('There are %d realizations', self.R)
         imtls = self.oqparam.imtls
         if not set(self.oqparam.risk_imtls) & set(imtls):
             rsk = ', '.join(self.oqparam.risk_imtls)
@@ -676,7 +671,7 @@ class RiskCalculator(HazardCalculator):
         num_tasks = self.oqparam.concurrent_tasks or 1
         if not hasattr(self, 'assetcol'):
             self.assetcol = self.datastore['assetcol']
-        self.riskmodel.taxonomy = self.assetcol.tagcol.taxonomies()
+        self.riskmodel.taxonomy = self.assetcol.tagcol.taxonomy
         assets_by_site = self.assetcol.assets_by_site()
         with self.monitor('building riskinputs', autoflush=True):
             riskinputs = []
@@ -697,14 +692,17 @@ class RiskCalculator(HazardCalculator):
                             reduced_eps[ass.ordinal] = eps[ass.ordinal]
                 # build the riskinputs
                 if kind == 'poe':  # hcurves, shape (R, N)
-                    getter = PmapGetter(dstore, sids)
+                    getter = PmapGetter(dstore, sids, self.rlzs_assoc)
                     getter.num_rlzs = self.R
                 else:  # gmf
-                    getter = GmfDataGetter(dstore, sids, self.R, eids)
+                    getter = GmfDataGetter(dstore, sids, self.R, num_events)
                 if dstore is self.datastore:
                     # read the hazard data in the controller node
                     logging.info('Reading hazard')
                     getter.init()
+                else:
+                    # the datastore must be closed to avoid the HDF5 fork bug
+                    assert dstore.hdf5 == (), '%s is not closed!' % dstore
                 ri = riskinput.RiskInput(getter, reduced_assets, reduced_eps)
                 if ri.weight > 0:
                     riskinputs.append(ri)
@@ -752,7 +750,7 @@ def get_gmv_data(sids, gmfs):
 
 def get_gmfs(calculator):
     """
-    :param calculator: a scenario_risk/damage or gmf_ebrisk calculator
+    :param calculator: a scenario_risk/damage or event_based_risk calculator
     :returns: a pair (eids, R) where R is the number of realizations
     """
     dstore = calculator.datastore

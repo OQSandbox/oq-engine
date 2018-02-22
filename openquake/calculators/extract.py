@@ -36,6 +36,15 @@ F32 = numpy.float32
 F64 = numpy.float64
 
 
+def barray(iterlines):
+    """
+    Array of bytes
+    """
+    lst = [line.encode('utf-8') for line in iterlines]
+    arr = numpy.array(lst)
+    return arr
+
+
 def extract_(dstore, dspath):
     """
     Extracts an HDF5 path object from the datastore, for instance
@@ -121,6 +130,19 @@ def extract_asset_values(dstore, sid):
     return data
 
 
+@extract.add('asset_tags')
+def extract_asset_tags(dstore, tagname):
+    """
+    Extract an array of asset tags for the given tagname. Use it as
+    /extract/asset_tags or /extract/asset_tags/taxonomy
+    """
+    tagcol = dstore['assetcol/tagcol']
+    if tagname:
+        yield tagname, barray(tagcol.gen_tags(tagname))
+    for tagname in tagcol.tagnames:
+        yield tagname, barray(tagcol.gen_tags(tagname))
+
+
 @extract.add('hazard')
 def extract_hazard(dstore, what):
     """
@@ -201,36 +223,47 @@ def hazard_items(dic, mesh, *extras, **kw):
 
 @extract.add('hcurves')
 def extract_hcurves(dstore, what):
+    """
+    Extracts hazard curves. Use it as /extract/hcurves/mean or
+    /extract/hcurves/rlz-0, /extract/hcurves/stats, /extract/hcurves/rlzs etc
+    """
     oq = dstore['oqparam']
     mesh = get_mesh(dstore['sitecol'])
     dic = {}
-    for kind, hcurves in getters.PmapGetter(dstore).items():
+    for kind, hcurves in getters.PmapGetter(dstore).items(what):
         dic[kind] = hcurves.convert_npy(oq.imtls, len(mesh))
-    return hazard_items(dic, mesh, investigation_time=oq.investigation_time)
-
-
-@extract.add('uhs')
-def extract_uhs(dstore, what):
-    oq = dstore['oqparam']
-    mesh = get_mesh(dstore['sitecol'])
-    dic = {}
-    for kind, hcurves in getters.PmapGetter(dstore).items():
-        dic[kind] = calc.make_uhs(hcurves, oq.imtls, oq.poes, len(mesh))
     return hazard_items(dic, mesh, investigation_time=oq.investigation_time)
 
 
 @extract.add('hmaps')
 def extract_hmaps(dstore, what):
+    """
+    Extracts hazard maps. Use it as /extract/hmaps/mean or
+    /extract/hmaps/rlz-0, etc
+    """
     oq = dstore['oqparam']
     sitecol = dstore['sitecol']
     mesh = get_mesh(sitecol)
     pdic = DictArray({imt: oq.poes for imt in oq.imtls})
     dic = {}
-    for kind, hcurves in getters.PmapGetter(dstore).items():
+    for kind, hcurves in getters.PmapGetter(dstore).items(what):
         hmap = calc.make_hmap(hcurves, oq.imtls, oq.poes)
         dic[kind] = calc.convert_to_array(hmap, len(mesh), pdic)
-    return hazard_items(dic, mesh, ('vs30', F32, sitecol.vs30),
-                        investigation_time=oq.investigation_time)
+    return hazard_items(dic, mesh, investigation_time=oq.investigation_time)
+
+
+@extract.add('uhs')
+def extract_uhs(dstore, what):
+    """
+    Extracts uniform hazard spectra. Use it as /extract/uhs/mean or
+    /extract/uhs/rlz-0, etc
+    """
+    oq = dstore['oqparam']
+    mesh = get_mesh(dstore['sitecol'])
+    dic = {}
+    for kind, hcurves in getters.PmapGetter(dstore).items(what):
+        dic[kind] = calc.make_uhs(hcurves, oq.imtls, oq.poes, len(mesh))
+    return hazard_items(dic, mesh, investigation_time=oq.investigation_time)
 
 
 def _agg(losses, idxs):

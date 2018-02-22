@@ -126,7 +126,7 @@ class ClassicalTestCase(CalculatorTestCase):
         # exercise the warning for no output when mean_hazard_curves='false'
         self.run_calc(
             case_7.__file__, 'job.ini', mean_hazard_curves='false',
-            hazard_maps='true', poes='0.1')
+            poes='0.1')
 
     @attr('qa', 'hazard', 'classical')
     def test_case_8(self):
@@ -178,7 +178,8 @@ class ClassicalTestCase(CalculatorTestCase):
         self.run_calc(
             case_13.__file__, 'job.ini', exports='csv', poes='0.2',
             hazard_calculation_id=str(self.calc.datastore.calc_id),
-            concurrent_tasks='0')
+            concurrent_tasks='0', gsim_logic_tree_file='',
+            source_model_logic_tree_file='')
         [fname] = export(('hmaps', 'csv'), self.calc.datastore)
         self.assertEqualFiles('expected/hazard_map-mean2.csv', fname,
                               delta=1E-5)
@@ -201,7 +202,7 @@ class ClassicalTestCase(CalculatorTestCase):
                                  'hmaps/poe-0.2/rlz-003'])
 
         # test extract/hcurves/rlz-0 also works, used by the npz exports
-        haz = dict(extract(self.calc.datastore, 'hcurves/rlz-0'))
+        haz = dict(extract(self.calc.datastore, 'hcurves'))
         self.assertEqual(sorted(haz), ['all', 'investigation_time'])
         self.assertEqual(
             haz['all'].dtype.names, ('lon', 'lat', 'depth', 'mean'))
@@ -319,6 +320,12 @@ hazard_uhs-mean.csv
             self.assertEqualFiles('expected/uhs-rlz-1.xml', fname)
         [fname] = export(('uhs/rlz-1', 'csv'),  self.calc.datastore)
         self.assertEqualFiles('expected/uhs-rlz-1.csv', fname)
+
+        # extracting hmaps
+        hmaps = dict(extract(self.calc.datastore, 'hmaps'))['all']['mean']
+        self.assertEqual(
+            hmaps.dtype.names,
+            ('PGA-0.002105', 'SA(0.2)-0.002105', 'SA(1.0)-0.002105'))
 
     @attr('qa', 'hazard', 'classical')
     def test_case_19(self):

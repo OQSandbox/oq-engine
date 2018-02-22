@@ -116,20 +116,20 @@ class Asset(object):
     """
     def __init__(self,
                  asset_id,
-                 tagvalues,
+                 tagidxs,
                  number,
                  location,
                  values,
                  area=1,
                  deductibles=None,
                  insurance_limits=None,
-                 retrofitteds=None,
+                 retrofitted=None,
                  calc=costcalculator,
                  ordinal=None):
         """
         :param asset_id:
             an unique identifier of the assets within the given exposure
-        :param tagvalues:
+        :param tagidxs:
             a list of indices for the taxonomy and other tags
         :param number:
             number of apartments of number of people in the given asset
@@ -143,20 +143,20 @@ class Asset(object):
         :param dict insurance_limits:
             insured limits values (expressed as a percentage relative to
             the value of the asset) keyed by loss types
-        :param dict retrofitteds:
-            asset retrofitting values keyed by loss types
+        :param retrofitted:
+            asset retrofitted value
         :param calc:
             cost calculator instance
         :param ordinal:
             asset collection ordinal
         """
         self.idx = asset_id
-        self.tagvalues = tagvalues
+        self.tagidxs = tagidxs
         self.number = number
         self.location = location
         self.values = values
         self.area = area
-        self.retrofitteds = retrofitteds
+        self._retrofitted = retrofitted
         self.deductibles = deductibles
         self.insurance_limits = insurance_limits
         self.calc = calc
@@ -184,7 +184,7 @@ class Asset(object):
         """
         :returns: the tagvalue associated to the given tagname
         """
-        return self.tagvalues[self.calc.tagi[tagname]]
+        return self.tagidxs[self.calc.tagi[tagname]]
 
     def deductible(self, loss_type):
         """
@@ -209,13 +209,11 @@ class Asset(object):
         else:
             return val
 
-    def retrofitted(self, loss_type, time_event=None):
+    def retrofitted(self):
         """
-        :returns: the asset retrofitted value for `loss_type`
+        :returns: the asset retrofitted value
         """
-        if loss_type == 'occupants':
-            return self.values['occupants_' + str(time_event)]
-        return self.calc(loss_type, self.retrofitteds,
+        return self.calc('structural', {'structural': self._retrofitted},
                          self.area, self.number)
 
     def tagmask(self, tags):
@@ -247,8 +245,19 @@ by_taxonomy = operator.attrgetter('taxonomy')
 
 
 class TagCollection(object):
+    """
+    An iterable collection of tags in the form "tagname=tagvalue".
+
+    :param tagnames: a list of tagnames starting with 'taxonomy'
+
+    The collection has a couple of attributes for each tagname,
+    starting with .taxonomy (a list of taxonomies) and .taxonomy_idx
+    (a dictionary taxonomy -> integer index).
+    """
     def __init__(self, tagnames):
         assert tagnames[0] == 'taxonomy', tagnames
+        assert len(tagnames) == len(set(tagnames)), (
+            'The tagnames %s contain duplicates' % tagnames)
         self.tagnames = tagnames
         for tagname in self.tagnames:
             setattr(self, tagname + '_idx', {'?': 0})
@@ -268,6 +277,11 @@ class TagCollection(object):
             return idx
 
     def add_tags(self, dic):
+        """
+        :param dic: a dictionary tagname -> tagvalue
+        :returns: a list of tag indices, one per tagname
+        """
+        # fill missing tagvalues with "?", raise an error for unknown tagnames
         idxs = []
         for tagname in self.tagnames:
             try:
@@ -285,18 +299,18 @@ class TagCollection(object):
                 'specified in the exposure' % ', '.join(dic))
         return idxs
 
-    def get_tag(self, tagname, idx):
-        return '%s=%s' % (tagname, decode(getattr(self, tagname)[idx]))
+    def get_tag(self, tagname, tagidx):
+        """
+        :returns: the tag associated to the given tagname and tag index
+        """
+        return '%s=%s' % (tagname, decode(getattr(self, tagname)[tagidx]))
 
     def gen_tags(self, tagname):
+        """
+        :yields: the tags associated to the given tagname
+        """
         for tagvalue in getattr(self, tagname):
             yield '%s=%s' % (tagname, decode(tagvalue))
-
-    def taxonomies(self):
-        lst = [None] * len(self.taxonomy_idx)
-        for taxo, idx in self.taxonomy_idx.items():
-            lst[idx] = taxo
-        return lst
 
     def __toh5__(self):
         dic = {}
@@ -329,7 +343,7 @@ class AssetCollection(object):
     # unneeded strings; also we would have to use fixed-length string, since
     # numpy has no concept of variable-lenght strings; unless we associate
     # numbers to each tagvalue, which is possible
-    D, I, R = len('deductible-'), len('insurance_limit-'), len('retrofitted-')
+    D, I = len('deductible-'), len('insurance_limit-')
 
     def __init__(self, assets_by_site, tagcol, cost_calculator,
                  time_event, occupancy_periods=''):
@@ -347,7 +361,7 @@ class AssetCollection(object):
         self.loss_types.sort()
         self.deduc = [n for n in fields if n.startswith('deductible-')]
         self.i_lim = [n for n in fields if n.startswith('insurance_limit-')]
-        self.retro = [n for n in fields if n.startswith('retrofitted-')]
+        self.retro = [n for n in fields if n == 'retrofitted']
 
     @property
     def tagnames(self):
@@ -360,7 +374,7 @@ class AssetCollection(object):
         ordinal = dict(zip(self.array['idx'], range(len(self.array))))
         aids_by_tag = general.AccumDict(accum=set())
         for ass in self:
-            for tagname, tagidx in zip(self.tagnames, ass.tagvalues):
+            for tagname, tagidx in zip(self.tagnames, ass.tagidxs):
                 tag = self.tagcol.get_tag(tagname, tagidx)
                 aids_by_tag[tag].add(ordinal[ass.idx])
         return aids_by_tag
@@ -429,7 +443,7 @@ class AssetCollection(object):
             area=a['area'],
             deductibles={lt[self.D:]: a[lt] for lt in self.deduc},
             insurance_limits={lt[self.I:]: a[lt] for lt in self.i_lim},
-            retrofitteds={lt[self.R:]: a[lt] for lt in self.retro},
+            retrofitted=a['retrofitted'] if self.retro else None,
             calc=self.cc,
             ordinal=aid)
 
@@ -492,11 +506,10 @@ class AssetCollection(object):
                 loss_types.append('value-' + candidate)
         deductible_d = first_asset.deductibles or {}
         limit_d = first_asset.insurance_limits or {}
-        retrofitting_d = first_asset.retrofitteds or {}
         deductibles = ['deductible-%s' % name for name in deductible_d]
         limits = ['insurance_limit-%s' % name for name in limit_d]
-        retrofittings = ['retrofitted-%s' % n for n in retrofitting_d]
-        float_fields = loss_types + deductibles + limits + retrofittings
+        retro = ['retrofitted'] if first_asset._retrofitted else []
+        float_fields = loss_types + deductibles + limits + retro
         int_fields = [(str(name), U16) for name in tagnames]
         tagi = {str(name): i for i, name in enumerate(tagnames)}
         asset_dt = numpy.dtype(
@@ -527,15 +540,17 @@ class AssetCollection(object):
                         value = asset.location[1]
                     elif field == 'occupants':
                         value = asset.values[the_occupants]
+                    elif field == 'retrofitted':
+                        value = asset._retrofitted
                     elif field in tagnames:
-                        value = asset.tagvalues[tagi[field]]
+                        value = asset.tagidxs[tagi[field]]
                     else:
                         try:
                             name, lt = field.split('-')
                         except ValueError:  # no - in field
                             name, lt = 'value', field
-                        # the line below retrieve one of `deductibles`,
-                        # `insurance_limits` or `retrofitteds` ("s" suffix)
+                        # the line below retrieve one of `deductibles` or
+                        # `insurance_limits` ("s" suffix)
                         value = getattr(asset, name + 's')[lt]
                     record[field] = value
         return assetcol
