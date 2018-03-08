@@ -32,16 +32,7 @@ class ValidationError(Exception):
 U32 = numpy.uint32
 F32 = numpy.float32
 by_taxonomy = operator.attrgetter('taxonomy')
-aids_dt = numpy.dtype([('aids', hdf5.vuint32)])
 indices_dt = numpy.dtype([('start', U32), ('stop', U32)])
-
-
-def get_refs(assets, hdf5path):
-    """
-    Debugging method returning the string IDs of the assets from the datastore
-    """
-    with hdf5.File(hdf5path, 'r') as f:
-        return f['asset_refs'][[a.idx for a in assets]]
 
 
 def read_composite_risk_model(dstore):
@@ -240,7 +231,7 @@ class CompositeRiskModel(collections.Mapping):
             riskinput.gmdata = hazard_getter.gmdata
 
     def _gen_outputs(self, hazard_getter, dic, gsim):
-        with self.monitor('building hazard'):
+        with self.monitor('getting hazard'):
             hazard = hazard_getter.get_hazard(gsim)
         imti = {imt: i for i, imt in enumerate(hazard_getter.imtls)}
         with self.monitor('computing risk'):
@@ -292,7 +283,7 @@ class RiskInput(object):
     def __init__(self, hazard_getter, assets_by_site, eps_dict=None):
         self.hazard_getter = hazard_getter
         self.assets_by_site = assets_by_site
-        self.eps = eps_dict
+        self.eps = eps_dict or {}
         taxonomies_set = set()
         aids = []
         for assets in self.assets_by_site:
@@ -316,7 +307,7 @@ class RiskInput(object):
         :param eids: ignored
         :returns: an array of E epsilons
         """
-        if not self.eps:
+        if len(self.eps) == 0:
             return
         eid2idx = self.hazard_getter.eid2idx
         idx = [eid2idx[eid] for eid in eids]
@@ -328,7 +319,7 @@ class RiskInput(object):
     def __repr__(self):
         return '<%s taxonomy=%s, %d asset(s)>' % (
             self.__class__.__name__,
-            ', '.join(self.taxonomies), len(self.aids))
+            ' '.join(map(str, self.taxonomies)), len(self.aids))
 
 
 class EpsilonMatrix0(object):
