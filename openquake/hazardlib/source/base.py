@@ -19,6 +19,7 @@ seismic sources.
 """
 from __future__ import division
 import abc
+import math
 from openquake.baselib.slots import with_slots
 from openquake.baselib.python3compat import with_metaclass
 
@@ -55,22 +56,25 @@ class BaseSeismicSource(with_metaclass(abc.ABCMeta)):
         """
         if not self.num_ruptures:
             self.num_ruptures = self.count_ruptures()
+        # (MS) the weight is proportional to the number of ruptures and GSIMs
+        # the relation to the number of sites is unclear, but for sure less
+        # than linear and I am using a sqrt here (totally made up but good)
         return (self.num_ruptures * self.RUPTURE_WEIGHT *
-                self.nsites * self.ngsims)
+                math.sqrt(self.nsites) * self.ngsims)
 
     @property
     def src_group_ids(self):
         """
         :returns: a list of source group IDs (usually of 1 element)
         """
-        grp_id = self.src_group_id
+        grp_id = getattr(self, 'src_group_id', [0])
         return [grp_id] if isinstance(grp_id, int) else grp_id
 
     def __init__(self, source_id, name, tectonic_region_type):
         self.source_id = source_id
         self.name = name
         self.tectonic_region_type = tectonic_region_type
-        self.src_group_id = None  # set by the engine
+        self.src_group_id = 0  # set by the engine
         self.num_ruptures = 0  # set by the engine
         self.seed = None  # set by the engine
         self.id = None  # set by the engine
@@ -85,6 +89,12 @@ class BaseSeismicSource(with_metaclass(abc.ABCMeta)):
             Generator of instances of sublclass of :class:
             `~openquake.hazardlib.source.rupture.BaseProbabilisticRupture`.
         """
+
+    def __iter__(self):
+        """
+        Override to implement source splitting
+        """
+        yield self
 
     @abc.abstractmethod
     def count_ruptures(self):

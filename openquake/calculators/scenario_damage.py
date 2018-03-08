@@ -19,8 +19,7 @@
 import itertools
 import numpy
 
-from openquake.commonlib import riskmodels
-from openquake.risklib import scientific
+from openquake.risklib import scientific, riskmodels
 from openquake.calculators import base, event_based
 
 F32 = numpy.float32
@@ -118,7 +117,7 @@ class ScenarioDamageCalculator(base.RiskCalculator):
             self.oqparam.number_of_ground_motion_fields)
         self.param['consequence_models'] = riskmodels.get_risk_models(
             self.oqparam, 'consequence')
-        self.riskinputs = self.build_riskinputs('gmf', eids=eids)
+        self.riskinputs = self.build_riskinputs('gmf', num_events=len(eids))
         self.param['tags'] = list(self.assetcol.tagcol)
 
     def post_execute(self, result):

@@ -34,7 +34,12 @@ except ImportError:
 import re
 import numpy
 import psutil
-
+try:
+    # Python 3
+    from urllib.parse import unquote_plus
+except ImportError:
+    # Python 2
+    from urllib import unquote_plus
 from xml.parsers.expat import ExpatError
 from django.http import (
     HttpResponse, HttpResponseNotFound, HttpResponseBadRequest)
@@ -47,7 +52,6 @@ from openquake.baselib.general import groupby, writetmp
 from openquake.baselib.python3compat import unicode, pickle
 from openquake.baselib.parallel import safely_call
 from openquake.hazardlib import nrml, gsim
-from openquake.risklib import read_nrml
 
 from openquake.commonlib import readinput, oqvalidation, logs
 from openquake.calculators.export import export
@@ -70,8 +74,6 @@ try:
 except ImportError:
     from django.core.servers.basehttp import FileWrapper
 
-
-read_nrml.update_validators()  # update risk validators
 
 METHOD_NOT_ALLOWED = 405
 NOT_IMPLEMENTED = 501
@@ -255,7 +257,7 @@ def validate_nrml(request):
             'Please provide the "xml_text" parameter')
     xml_file = writetmp(xml_text, suffix='.xml')
     try:
-        nrml.parse(xml_file)
+        nrml.to_python(xml_file)
     except ExpatError as exc:
         return _make_response(error_msg=str(exc),
                               error_line=exc.lineno,
@@ -371,9 +373,13 @@ def calc_abort(request, calc_id):
                             status=403)
 
     if job.pid:  # is a spawned job
-        os.kill(job.pid, signal.SIGTERM)
-        logging.warn('Aborting job %d, pid=%d', job.id, job.pid)
-        logs.dbcmd('set_status', job.id, 'aborted')
+        try:
+            os.kill(job.pid, signal.SIGTERM)
+        except Exception as exc:
+            logging.error(exc)
+        else:
+            logging.warn('Aborting job %d, pid=%d', job.id, job.pid)
+            logs.dbcmd('set_status', job.id, 'aborted')
         message = {'success': 'Killing job %d' % job.id}
         return HttpResponse(content=json.dumps(message), content_type=JSON)
 
@@ -465,11 +471,12 @@ def run_calc(request):
         candidates = ("job_risk.ini", "job.ini")
     else:
         candidates = ("job_hazard.ini", "job_haz.ini", "job.ini")
-    einfo, exctype, monitor = safely_call(_prepare_job, (request, candidates))
-    if exctype:
-        return HttpResponse(json.dumps(einfo.splitlines()),
+    result = safely_call(_prepare_job, (request, candidates))
+    if result.tb_str:
+        return HttpResponse(json.dumps(result.tb_str.splitlines()),
                             content_type=JSON, status=500)
-    if not einfo:
+    inifiles = result.get()
+    if not inifiles:
         msg = 'Could not find any file of the form %s' % str(candidates)
         logging.error(msg)
         return HttpResponse(content=json.dumps([msg]), content_type=JSON,
@@ -477,7 +484,7 @@ def run_calc(request):
 
     user = utils.get_user_data(request)
     try:
-        job_id, pid = submit_job(einfo[0], user['name'], hazard_job_id)
+        job_id, pid = submit_job(inifiles[0], user['name'], hazard_job_id)
     except Exception as exc:  # no job created, for instance missing .xml file
         # get the exception message
         exc_msg = str(exc)
@@ -677,7 +684,7 @@ def extract(request, calc_id, what):
             prefix=what.replace('/', '-'), suffix='.npz')
         os.close(fd)
         n = len(request.path_info)
-        query_string = request.get_full_path()[n:]
+        query_string = unquote_plus(request.get_full_path()[n:])
         obj = _extract(ds, what + query_string)
         if inspect.isgenerator(obj):
             array, attrs = 0, {k: _array(v) for k, v in obj}

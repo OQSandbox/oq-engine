@@ -34,11 +34,12 @@ import operator
 from collections import namedtuple
 from decimal import Decimal
 import numpy
+from openquake.baselib import hdf5
 from openquake.baselib.general import groupby
 from openquake.baselib.python3compat import raise_
 import openquake.hazardlib.source as ohs
 from openquake.hazardlib.gsim.base import CoeffsTable
-from openquake.hazardlib.gsim.gsim_table import GMPETable
+from openquake.hazardlib.gsim.gmpe_table import GMPETable
 from openquake.hazardlib.imt import from_string
 from openquake.hazardlib import geo, valid, nrml
 from openquake.hazardlib.sourceconverter import (
@@ -58,9 +59,9 @@ class SourceModel(object):
     A container of SourceGroup instances with some additional attributes
     describing the source model in the logic tree.
     """
-    def __init__(self, name, weight, path, src_groups, num_gsim_paths, ordinal,
-                 samples):
-        self.name = name
+    def __init__(self, names, weight, path, src_groups, num_gsim_paths,
+                 ordinal, samples):
+        self.names = names
         self.weight = weight
         self.path = path
         self.src_groups = src_groups
@@ -69,7 +70,23 @@ class SourceModel(object):
         self.samples = samples
 
     @property
+    def name(self):
+        """
+        Compact representation for the names
+        """
+        names = self.names.split()
+        if len(names) == 1:
+            return names[0]
+        elif len(names) == 2:
+            return ' '.join(names)
+        else:
+            return ' '.join([names[0], '...', names[-1]])
+
+    @property
     def num_sources(self):
+        """
+        Number of sources contained in the source model
+        """
         return sum(len(sg) for sg in self.src_groups)
 
     def get_skeleton(self):
@@ -82,13 +99,13 @@ class SourceModel(object):
             sg = copy.copy(grp)
             sg.sources = []
             src_groups.append(sg)
-        return self.__class__(self.name, self.weight, self.path, src_groups,
+        return self.__class__(self.names, self.weight, self.path, src_groups,
                               self.num_gsim_paths, self.ordinal, self.samples)
 
     def __repr__(self):
         samples = ', samples=%d' % self.samples if self.samples > 1 else ''
         return '<%s #%d %s, path=%s, weight=%s%s>' % (
-            self.__class__.__name__, self.ordinal, self.name,
+            self.__class__.__name__, self.ordinal, self.names,
             '_'.join(self.path), self.weight, samples)
 
 Realization = namedtuple('Realization', 'value weight lt_path ordinal lt_uid')
@@ -429,6 +446,46 @@ class BranchSet(object):
                                        occurrence_rates=occur_rates))
 
 
+class FakeSmlt(object):
+    """
+    A replacement for the SourceModelLogicTree class, to be used when
+    there is a trivial source model logic tree. In practice, when
+    `source_model_logic_tree_file` is missing but there is a
+    `source_model_file` in the job.ini file.
+    """
+    def __init__(self, filename, seed=0, num_samples=0):
+        self.filename = filename
+        self.basepath = os.path.dirname(filename)
+        self.seed = seed
+        self.num_samples = num_samples
+        self.tectonic_region_types = set()
+
+    def gen_source_models(self, gsim_lt):
+        """
+        Yield the underlying SourceModel, multiple times if there is sampling
+        """
+        num_gsim_paths = 1 if self.num_samples else gsim_lt.get_num_paths()
+        for i, rlz in enumerate(self):
+            yield SourceModel(
+                rlz.value, rlz.weight, ('b1',), [], num_gsim_paths, i, 1)
+
+    def make_apply_uncertainties(self, branch_ids):
+        """
+        :returns: a do nothing function
+        """
+        return lambda source: None
+
+    def __iter__(self):
+        name = os.path.basename(self.filename)
+        smlt_path = ('b1',)
+        if self.num_samples:  # many realizations of equal weight
+            weight = 1. / self.num_samples
+            for i in range(self.num_samples):
+                yield Realization(name, weight, smlt_path, None, smlt_path)
+        else:  # there is a single realization
+            yield Realization(name, 1.0, smlt_path, 0, smlt_path)
+
+
 class SourceModelLogicTree(object):
     """
     Source model logic tree parser.
@@ -627,11 +684,13 @@ class SourceModelLogicTree(object):
                 yield Realization(name, weight, tuple(sm_lt_path), None,
                                   tuple(sm_lt_path))
         else:  # full enumeration
+            ordinal = 0
             for weight, smlt_path in self.root_branchset.enumerate_paths():
                 name = smlt_path[0].value
                 smlt_branch_ids = [branch.branch_id for branch in smlt_path]
-                yield Realization(name, weight, tuple(smlt_branch_ids), None,
-                                  tuple(smlt_branch_ids))
+                yield Realization(name, weight, tuple(smlt_branch_ids),
+                                  ordinal, tuple(smlt_branch_ids))
+                ordinal += 1
 
     def parse_uncertainty_value(self, node, branchset):
         """
@@ -1132,6 +1191,7 @@ class GsimLogicTree(object):
                 ','.join(self.tectonic_region_types))
         self.values = collections.defaultdict(list)  # {trt: gsims}
         self._ltnode = ltnode or node_from_xml(fname).logicTree
+        self.gmpe_tables = set() # populated right below
         self.all_trts, self.branches = self._build_trts_branches()
         if tectonic_region_types and not self.branches:
             raise InvalidLogicTree(
@@ -1158,11 +1218,30 @@ class GsimLogicTree(object):
                                     '%s is out of the period range defined '
                                     'for %s' % (imt, gsim))
 
+    def store_gmpe_tables(self, dstore):
+        """
+        Store the GMPE tables in HDF5 format inside the datastore
+        """
+        dest = dstore.hdf5
+        dirname = os.path.dirname(self.fname)
+        for gmpe_table in sorted(self.gmpe_tables):
+            hdf5path = os.path.join(dirname, gmpe_table)
+            with hdf5.File(hdf5path, 'r') as f:
+                for group in f:
+                    name = '%s/%s' % (gmpe_table, group)
+                    if hasattr(f[group], 'value'):  # dataset, not group
+                        dstore[name] = f[group].value
+                        for k, v in f[group].attrs.items():
+                            dstore[name].attrs[k] = v
+                    else:
+                        grp = dest.require_group(gmpe_table)
+                        f.copy(group, grp)
+
     def __str__(self):
         """
         :returns: an XML string representing the logic tree
         """
-        return nrml.convert(self._ltnode)
+        return nrml.to_string(self._ltnode)
 
     def reduce(self, trts):
         """
@@ -1239,6 +1318,7 @@ class GsimLogicTree(object):
                             # a bit hackish: set the GMPE_DIR equal to the
                             # directory where the gsim_logic_tree file is
                             GMPETable.GMPE_DIR = os.path.dirname(self.fname)
+                            self.gmpe_tables.add(uncertainty['gmpe_table'])
                         try:
                             gsim = valid.gsim(gsim_name, **uncertainty.attrib)
                         except:

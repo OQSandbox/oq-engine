@@ -19,9 +19,6 @@
 import unittest
 from openquake.baselib.general import writetmp
 from openquake.hazardlib import nrml
-from openquake.risklib import read_nrml
-
-read_nrml.update_validators()
 
 
 class VulnerabilityFunctionTestCase(unittest.TestCase):
@@ -70,6 +67,6 @@ class VulnerabilityFunctionTestCase(unittest.TestCase):
 	</vulnerabilityModel> 
 </nrml>''')
         with self.assertRaises(ValueError) as ctx:
-            nrml.parse(fname)
+            nrml.to_python(fname)
         self.assertIn('Wrong number of probabilities (expected 14, got 17)',
                       str(ctx.exception))

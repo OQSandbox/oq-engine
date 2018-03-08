@@ -31,14 +31,13 @@ from openquake.baselib.python3compat import with_metaclass
 from openquake.baselib.general import distinct
 from openquake.baselib import hdf5
 from openquake.hazardlib import imt, scalerel, gsim
+from openquake.hazardlib.gsim.gmpe_table import GMPETable
 from openquake.hazardlib.calc import disagg
 from openquake.hazardlib.calc.filters import IntegrationDistance
 
 SCALEREL = scalerel.get_available_magnitude_scalerel()
 
 GSIM = gsim.get_available_gsims()
-
-disagg_outs = ['_'.join(tup) for tup in sorted(disagg.pmf_map)]
 
 
 def disagg_outputs(value):
@@ -52,7 +51,7 @@ def disagg_outputs(value):
     """
     values = value.replace(',', ' ').split()
     for val in values:
-        if val not in disagg_outs:
+        if val not in disagg.pmf_map:
             raise ValueError('Invalid disagg output: %s' % val)
     return values
 
@@ -71,14 +70,17 @@ def gsim(value, **kwargs):
     'BooreAtkinson2011()'
     """
     minimum_distance = float(kwargs.pop('minimum_distance', 0))
+    if value.endswith('()'):
+        value = value[:-2]  # strip parenthesis
     if value == 'FromFile':
         return FromFile()
-    elif value.endswith('()'):
-        value = value[:-2]  # strip parenthesis
-    try:
-        gsim_class = GSIM[value]
-    except KeyError:
-        raise ValueError('Unknown GSIM: %s' % value)
+    elif value.startswith('GMPETable'):
+        gsim_class = GMPETable
+    else:
+        try:
+            gsim_class = GSIM[value]
+        except KeyError:
+            raise ValueError('Unknown GSIM: %s' % value)
     try:
         gs = gsim_class(**kwargs)
     except TypeError:

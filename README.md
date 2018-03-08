@@ -5,4 +5,3 @@ The code comes with NO WARRANTY of fitness for purpose, and the user SHOULD down
 
 For development or contributions to code the use is recommended to adopt the steps for developer installation of OpenQuake (https://github.com/gem/oq-engine/blob/master/doc/installing/development.md) subsituting the clone of the official OQ repository for the clone of this one. For all other development related notes see the information here: https://github.com/gem/oq-engine/blob/master/doc/developers-notes.md
 
-For all other information regarding OpenQuake please refer to the main repository (http://github.com/gem/oq-engine)

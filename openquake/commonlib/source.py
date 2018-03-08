@@ -21,6 +21,7 @@ import os
 import re
 import copy
 import math
+import time
 import logging
 import operator
 import collections
@@ -28,15 +29,14 @@ import numpy
 
 from openquake.baselib import hdf5, node
 from openquake.baselib.python3compat import decode
-from openquake.baselib.general import (
-    groupby, group_array, block_splitter, writetmp, AccumDict)
+from openquake.baselib.general import groupby, group_array, writetmp, AccumDict
 from openquake.hazardlib import (
     nrml, source, sourceconverter, InvalidFile, probability_map, stats)
+from openquake.hazardlib.gsim.gmpe_table import GMPETable
 from openquake.commonlib import logictree
 
 
 MINWEIGHT = source.MINWEIGHT
-MAXWEIGHT = 1E7  # heuristic, set by M. Simionato
 MAX_INT = 2 ** 31 - 1
 TWO16 = 2 ** 16
 U16 = numpy.uint16
@@ -46,6 +46,32 @@ F32 = numpy.float32
 weight = operator.attrgetter('weight')
 rlz_dt = numpy.dtype([('uid', 'S200'), ('model', 'S200'),
                       ('gsims', 'S100'), ('weight', F32)])
+
+
+def split_sources(srcs):
+    """
+    :param srcs: sources
+    :returns: a pair (split sources, split time)
+    """
+    sources = []
+    split_time = {}  # src_id -> dt
+    for src in srcs:
+        t0 = time.time()
+        splits = list(src)
+        split_time[src.source_id] = time.time() - t0
+        sources.extend(splits)
+        if len(splits) > 1:
+            has_serial = hasattr(src, 'serial')
+            start = 0
+            for i, split in enumerate(splits):
+                split.source_id = '%s:%s' % (src.source_id, i)
+                split.src_group_id = src.src_group_id
+                split.ngsims = src.ngsims
+                if has_serial:
+                    nr = split.num_ruptures
+                    split.serial = src.serial[start:start + nr]
+                    start += nr
+    return sources, split_time
 
 
 def gsim_names(rlz):
@@ -326,6 +352,17 @@ def accept_path(path, ref_path):
     return True
 
 
+def get_totrup(data):
+    """
+    :param data: a record with a field `totrup`, possibily missing
+    """
+    try:
+        totrup = data['totrup']
+    except ValueError:  # engine older than 2.9
+        totrup = 0
+    return totrup
+
+
 class CompositionInfo(object):
     """
     An object to collect information about the composition of
@@ -431,7 +468,7 @@ class CompositionInfo(object):
                 data.append((src_group.id, trti[src_group.trt],
                              src_group.eff_ruptures, src_group.tot_ruptures,
                              sm.ordinal))
-        lst = [(sm.name, sm.weight, '_'.join(sm.path),
+        lst = [(sm.names, sm.weight, '_'.join(sm.path),
                 sm.num_gsim_paths, sm.samples)
                for i, sm in enumerate(self.source_models)]
         return (dict(
@@ -450,20 +487,11 @@ class CompositionInfo(object):
         vars(self).update(attrs)
         self.gsim_fname = decode(self.gsim_fname)
         if self.gsim_fname.endswith('.xml'):
+            # otherwise it would look in the current directory
+            GMPETable.GMPE_DIR = os.path.dirname(self.gsim_fname)
             trts = sorted(self.trts)
-            if 'gmpe_table' in self.gsim_lt_xml:
-                # the canadian gsims depends on external files which are not
-                # in the datastore; I am storing the path to the original
-                # file so that the external files can be found; unfortunately,
-                # this means that copying the datastore on a different machine
-                # and exporting from there works only if the gsim_fname and all
-                # the external files are copied in the exact same place
-                self.gsim_lt = logictree.GsimLogicTree(self.gsim_fname, trts)
-            else:
-                # regular case: read the logic tree from self.gsim_lt_xml,
-                # so that you do not need to copy anything except the datastore
-                tmp = writetmp(self.gsim_lt_xml, suffix='.xml')
-                self.gsim_lt = logictree.GsimLogicTree(tmp, trts)
+            tmp = writetmp(self.gsim_lt_xml, suffix='.xml')
+            self.gsim_lt = logictree.GsimLogicTree(tmp, trts)
         else:  # fake file with the name of the GSIM
             self.gsim_lt = logictree.GsimLogicTree.from_(self.gsim_fname)
         self.source_models = []
@@ -471,9 +499,9 @@ class CompositionInfo(object):
             tdata = sg_data[sm_id]
             srcgroups = [
                 sourceconverter.SourceGroup(
-                    self.trts[trti], id=grp_id, eff_ruptures=effrup,
-                    tot_ruptures=totrup)
-                for grp_id, trti, effrup, totrup, sm_id in tdata if effrup]
+                    self.trts[data['trti']], id=data['grp_id'],
+                    eff_ruptures=data['effrup'], tot_ruptures=get_totrup(data))
+                for data in tdata if data['effrup']]
             path = tuple(str(decode(rec['path'])).split('_'))
             trts = set(sg.trt for sg in srcgroups)
             num_gsim_paths = self.gsim_lt.reduce(trts).get_num_paths()
@@ -586,7 +614,7 @@ class CompositionInfo(object):
         for sm in self.source_models:
             for rlz in realizations:
                 if rlz.sm_lt_path == sm.path:
-                    dic[rlz] = sm.name
+                    dic[rlz] = sm.names
         return dic
 
     def get_sm_by_grp(self):
@@ -619,7 +647,7 @@ class CompositionInfo(object):
         if len(rlzs) > TWO16:
             raise ValueError(
                 'The source model %s has %d realizations, the maximum '
-                'is %d' % (smodel.name, len(rlzs), TWO16))
+                'is %d' % (smodel.names, len(rlzs), TWO16))
         return rlzs
 
     def __repr__(self):
@@ -627,7 +655,7 @@ class CompositionInfo(object):
         for sm in self.source_models:
             info_by_model[sm.path] = (
                 '_'.join(map(decode, sm.path)),
-                decode(sm.name),
+                decode(sm.names),
                 [sg.id for sg in sm.src_groups],
                 sm.weight,
                 self.get_num_rlzs(sm))
@@ -650,7 +678,6 @@ class CompositeSourceModel(collections.Sequence):
         self.source_model_lt = source_model_lt
         self.source_models = source_models
         self.source_info = ()
-        self.split_map = {}
         self.weight = 0
         self.info = CompositionInfo(
             gsim_lt, self.source_model_lt.seed,
@@ -668,6 +695,25 @@ class CompositeSourceModel(collections.Sequence):
         else:
             self.has_dupl_sources = len(dupl_sources)
 
+    def split_all(self):
+        """
+        Split all sources in the composite source model.
+
+        :returns: a dictionary source_id -> split_time
+        """
+        split_time = AccumDict()
+        for sm in self.source_models:
+            for src_group in sm.src_groups:
+                self.add_infos(src_group)
+                for src in src_group:
+                    split_time[src.source_id] = 0
+                if getattr(src_group, 'src_interdep', None) != 'mutex':
+                    # mutex sources cannot be split
+                    srcs, stime = split_sources(src_group)
+                    src_group.sources = srcs
+                    split_time += stime
+        return split_time
+
     def grp_by_src(self):
         """
         :returns: a new CompositeSourceModel with one group per source
@@ -676,7 +722,7 @@ class CompositeSourceModel(collections.Sequence):
         grp_id = 0
         for sm in self.source_models:
             src_groups = []
-            smodel = sm.__class__(sm.name, sm.weight, sm.path, src_groups,
+            smodel = sm.__class__(sm.names, sm.weight, sm.path, src_groups,
                                   sm.num_gsim_paths, sm.ordinal, sm.samples)
             for sg in sm.src_groups:
                 for src in sg.sources:
@@ -702,7 +748,7 @@ class CompositeSourceModel(collections.Sequence):
                          for src in sg.sources)
         return new
 
-    def filter(self, src_filter):
+    def filter(self, src_filter):  # called once per tile
         """
         Generate a new CompositeSourceModel by filtering the sources on
         the given site collection.
@@ -716,26 +762,19 @@ class CompositeSourceModel(collections.Sequence):
         for sm in self.source_models:
             src_groups = []
             for src_group in sm.src_groups:
-                self.add_infos(src_group.sources)  # unsplit sources
-                sources = []
-                for src in src_group.sources:
-                    if hasattr(src, '__iter__'):  # MultiPointSource
-                        sources.extend(source.split_source(src))
-                    else:
-                        sources.append(src)
                 sg = copy.copy(src_group)
                 sg.sources = []
-                for src, _sites in src_filter(sources):
+                for src, _sites in src_filter(src_group.sources):
                     sg.sources.append(src)
                     src.ngsims = ngsims[src.tectonic_region_type]
                     weight += src.weight
                 src_groups.append(sg)
             newsm = logictree.SourceModel(
-                sm.name, sm.weight, sm.path, src_groups,
+                sm.names, sm.weight, sm.path, src_groups,
                 sm.num_gsim_paths, sm.ordinal, sm.samples)
             source_models.append(newsm)
         new = self.__class__(self.gsim_lt, self.source_model_lt, source_models)
-        new.weight = weight
+        new.weight = new.info.tot_weight = weight
         new.src_filter = src_filter
         return new
 
@@ -843,48 +882,21 @@ class CompositeSourceModel(collections.Sequence):
                 src.serial = rup_serial[start:start + nr]
                 start += nr
 
-    def get_maxweight(self, concurrent_tasks):
+    def get_maxweight(self, concurrent_tasks, minweight=MINWEIGHT):
         """
         Return an appropriate maxweight for use in the block_splitter
         """
         ct = concurrent_tasks or 1
         mw = math.ceil(self.weight / ct)
-        if mw < MINWEIGHT:
-            mw = MINWEIGHT
-        elif mw > MAXWEIGHT:
-            mw = MAXWEIGHT
-        return mw
+        return max(mw, minweight)
 
     def add_infos(self, sources):
         """
-        Populate the .infos dictionary (grp_id, src_id) -> <SourceInfo>
+        Populate the .infos dictionary src_id -> <SourceInfo>
         """
         for src in sources:
-            self.infos[src.source_id] = SourceInfo(src)
-
-    def split_in_blocks(self, maxweight, sources):
-        """
-        Split a set of sources in blocks of weight up to maxweight; heavy
-        sources (i.e. with weight > maxweight) are split.
-
-        :param maxweight: maximum weight of a block
-        :param sources: sources of the same source group
-        :yields: blocks of sources of weight around maxweight
-        """
-        sources.sort(key=weight)
-
-        # yield light sources in blocks
-        light = [src for src in sources if src.weight <= maxweight]
-        for block in block_splitter(light, maxweight, weight):
-            yield block
-
-        # yield heavy sources in blocks
-        heavy = [src for src in sources if src.weight > maxweight]
-        for src in heavy:
-            srcs = [s for s in source.split_source(src)
-                    if self.src_filter.get_close_sites(s) is not None]
-            for block in block_splitter(srcs, maxweight, weight):
-                yield block
+            info = SourceInfo(src)
+            self.infos[info.source_id] = info
 
     def __repr__(self):
         """
@@ -939,14 +951,16 @@ class SourceInfo(object):
         ('source_class', (bytes, 30)),     # 1
         ('num_ruptures', numpy.uint32),    # 2
         ('calc_time', numpy.float32),      # 3
-        ('num_sites', numpy.uint32),       # 4
-        ('num_split',  numpy.uint32),      # 5
+        ('split_time', numpy.float32),     # 4
+        ('num_sites', numpy.uint32),       # 5
+        ('num_split',  numpy.uint32),      # 6
     ])
 
-    def __init__(self, src, calc_time=0, num_split=0):
-        self.source_id = src.source_id
+    def __init__(self, src, calc_time=0, split_time=0, num_split=0):
+        self.source_id = src.source_id.rsplit(':', 1)[0]
         self.source_class = src.__class__.__name__
         self.num_ruptures = src.num_ruptures
         self.num_sites = getattr(src, 'nsites', 0)
         self.calc_time = calc_time
+        self.split_time = split_time
         self.num_split = num_split
