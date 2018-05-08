@@ -145,12 +145,10 @@ class HAZUSLiquefaction(GDEM):
     REQUIRES_SITES_PARAMETERS = set(("liquefaction_susceptibility",
                                      "dw", "vs30"))
     
-    def get_probability_failure(self, sctx, rctx, dctx, gsimtls=None):
+    def get_probability_failure(self, sctx, rctx, dctx, gsimtls, epsilons):
         """
         Returns the probability of failure
         """
-        if not gsimtls:
-            gsimtls = self.get_mean_and_stddevs(sctx, rctx, dctx)
         # Calculate the magnitude and ground water depth correction factors
         kmw = self._get_magnitude_correction_factor(rctx.mag)
         kdw = self._get_groundwater_depth_correction_factor(sctx)
@@ -169,7 +167,12 @@ class HAZUSLiquefaction(GDEM):
             gsimtls["PGA"][const.StdDev.TOTAL]
         # For each epsilon value determine the PGA and the probability of
         # failure for that PGA
-        for j, epsilon in enumerate(self.epsilons):
+        if len(epsilons):
+            truncnorm_probs
+            # Either no uncertainty or just the median value taken
+            truncnorm_probs = [1.0]
+
+        for j, epsilon in enumerate(epsilons):
             # Get the PGA for the given epsilon
             pga = np.exp(pga_mean + epsilon * pga_sigma)
             # Get the probabilist of liquefaction for that PGA
@@ -222,7 +225,7 @@ class HAZUSLiquefaction(GDEM):
                 pga,
                 sctx.liquefaction_susceptibility)
             # Determine the probability of failure
-            p_failure = p_liq * p_fact
+            p_failure = self.truncnorm_probs[j] * (p_liq * p_fact)
             if not np.any(p_failure > 0.):
                 # No liquefaction triggered
                 continue
@@ -343,25 +346,22 @@ class HAZUSLiquefaction(GDEM):
                 _get_liquefaction_susceptibility_category(vs30[idx])
         return sctx
 
-    @staticmethod
-    def _get_magnitude_correction_factor(mag):
+    def _get_magnitude_correction_factor(self, mag):
         """
         Returns the magnitude correction factor
         (Equation 4.21)
         """
         return 0.0027 * (mag ** 3.) - 0.0267 * (mag ** 2.) -\
             0.2055 * mag + 2.9188
-
-    @staticmethod
-    def _get_groundwater_depth_correction_factor(sctx):
+    
+    def _get_groundwater_depth_correction_factor(self, sctx):
         """
         Returns the groundwater depth correction factor
         (Equation 4.22)
         """
         return 0.022 * sctx.dw + 0.93
-
-    @staticmethod
-    def _get_displacement_correction_factor(mag):
+    
+    def _get_displacement_correction_factor(self, mag):
         """
         Returns the displacement correction Kdelta
         """
@@ -542,3 +542,4 @@ class HAZUSLandsliding(GDEM):
         """
         return 0.3419 * (mag ** 3.) - 5.5214 * (mag ** 2.) + 33.6154 * mag -\
             70.7692
+

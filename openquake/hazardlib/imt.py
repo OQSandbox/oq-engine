@@ -192,7 +192,22 @@ class MMI(_IMT):
     and on humans and their structures.
     """
 
-class PGDf(_IMT):
+class PGDfLatSpread(_IMT):
     """
-    Permanent ground defomation (m)
+    Permanent ground defomation (m) from lateral spread
+    """
+
+class PGDfSettle(_IMT):
+    """
+    Permanent ground defomation (m) from settlement
+    """
+
+class PGDfSlope(_IMT):
+    """
+    Permanent ground deformation (m) from slope failure
+    """
+
+class PGDfRupture(_IMT):
+    """
+    Permanent ground deformation (m) from co-seismic rupture
     """

@@ -48,7 +48,26 @@ class Site(object):
     :param backarc":
         Boolean value, ``True`` if the site is in the subduction backarc and
         ``False`` if it is in the subduction forearc or is unknown
-
+    :param liquefaction_susceptibility:
+        HAZUS Liquefaction susceptibility classes (as integer in range 0 - 5)
+    :param landsliding_susceptibility:
+        HAZUS Landsliding susceptibility class (as integer in range 0 - 10)
+    :param water_depth:
+        Depth to water table (m)
+    :param yield_acceleration:
+        Yield acceleration (g) for landsliding
+    :param cti:
+        Compound Topographic Index
+    :param dc:
+        Distance to coast (km)
+    :param dr:
+        Distance to river (km)
+    :param dwb:
+        Distance to nearest water body (km)
+    :param hwater:
+        Elevation above nearest water body (m)
+    :param precip:
+        Annual Precipitation (mm)
     :raises ValueError:
         If any of ``vs30``, ``z1pt0`` or ``z2pt5`` is zero or negative.
 
@@ -56,10 +75,16 @@ class Site(object):
 
         :class:`Sites <Site>` are pickleable
     """
-    _slots_ = 'location vs30 vs30measured z1pt0 z2pt5 backarc'.split()
+    _slots_ = ('location vs30 vs30measured z1pt0 z2pt5 backarc '
+               'liquefaction_susceptibility landsliding_susceptibility '
+               'dw yield_acceleration cti dc dr dwb hwater precip'
+               ).split()
 
     def __init__(self, location, vs30, vs30measured, z1pt0, z2pt5,
-                 backarc=False):
+                 backarc=False, liquefaction_susceptibility=0,
+                 landsliding_susceptibility=0, water_depth=10.,
+                 yield_acceleration=0.0, cti=0.0, dc=0.0, dr=0.0, dwb=0.0,
+                 hwater=0.0, precip=0.0):
         if not vs30 > 0:
             raise ValueError('vs30 must be positive')
         if not z1pt0 > 0:
@@ -72,6 +97,17 @@ class Site(object):
         self.z1pt0 = z1pt0
         self.z2pt5 = z2pt5
         self.backarc = backarc
+        # Geotech parameters
+        self.liquefaction_susceptibility = liquefaction_susceptibility
+        self.landsliding_susceptibility = landsliding_susceptibility
+        self.dw = water_depth
+        self.yield_acceleration = yield_acceleration
+        self.cti = cti
+        self.dc = dc
+        self.dr = dr
+        self.dwb = dwb
+        self.hwater = hwater
+        self.precip = precip
 
     def __str__(self):
         """
@@ -141,6 +177,16 @@ class SiteCollection(object):
         ('z1pt0', numpy.float64),
         ('z2pt5', numpy.float64),
         ('backarc', numpy.bool),
+        ('landsliding_susceptibility', numpy.uint32),
+        ('liquefaction_susceptibility', numpy.uint32),
+        ('dw', numpy.float64),
+        ('yield_acceleration', numpy.float64),
+        ('cti', numpy.float64),
+        ('dc', numpy.float64),
+        ('dr', numpy.float64),
+        ('dwb', numpy.float64),
+        ('hwater', numpy.float64),
+        ('precip', numpy.float64)
     ])
 
     @classmethod
@@ -178,6 +224,18 @@ class SiteCollection(object):
         arr['z1pt0'] = sitemodel.reference_depth_to_1pt0km_per_sec
         arr['z2pt5'] = sitemodel.reference_depth_to_2pt5km_per_sec
         arr['backarc'] = sitemodel.reference_backarc
+        arr['liquefaction_susceptibility'] =\
+            sitemodel.liquefaction_susceptibility
+        arr['landsliding_susceptibility'] =\
+            sitemodel.landsliding_susceptibility
+        arr['dw'] = sitemodel.dw
+        arr['yield_acceleration'] = sitemodel.yield_acceleration
+        arr['cti'] = sitemodel.cti
+        arr['dc'] = sitemodel.dc
+        arr['dr'] = sitemodel.dr
+        arr['dwb'] = sitemodel.dwb
+        arr['hwater'] = sitemodel.hwater
+        arr['precip'] = sitemodel.precip
         arr.flags.writeable = False
         return self
 
@@ -209,6 +267,18 @@ class SiteCollection(object):
             arr['z1pt0'][i] = sites[i].z1pt0
             arr['z2pt5'][i] = sites[i].z2pt5
             arr['backarc'][i] = sites[i].backarc
+            arr['landsliding_susceptibility'][i] =\
+                sites[i].landsliding_susceptibility
+            arr['liquefaction_susceptibility'][i] =\
+                sites[i].liquefaction_susceptibility
+            arr['dw'][i]= sites[i].dw
+            arr['yield_acceleration'][i] = sites[i].yield_acceleration
+            arr['cti'][i] = sites[i].cti
+            arr['dc'][i] = sites[i].dc
+            arr['dr'][i] = sites[i].dr
+            arr['dwb'][i] = sites[i].dwb
+            arr['hwater'][i] = sites[i].hwater
+            arr['precip'][i] = sites[i].precip
 
         # protect arrays from being accidentally changed. it is useful
         # because we pass these arrays directly to a GMPE through
@@ -322,7 +392,9 @@ class SiteCollection(object):
 
     def __getattr__(self, name):
         if name not in ('vs30 vs30measured z1pt0 z2pt5 backarc lons lats '
-                        'depths sids'):
+                        'depths sids liquefaction_susceptibility dw '
+                        'landsliding_susceptibility yield_acceleration cti '
+                        'dc dr dwb hwater precip'):
             raise AttributeError(name)
         if self.indices is None:
             idx = slice(None)
