@@ -1,5 +1,5 @@
 # The Hazard Library
-# Copyright (C) 2012-2017 GEM Foundation
+# Copyright (C) 2012-2018 GEM Foundation
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as
@@ -20,7 +20,6 @@ defines :class:`ComplexFaultSource`.
 import copy
 import numpy
 
-from openquake.baselib.python3compat import range
 from openquake.hazardlib import mfd
 from openquake.hazardlib.source.base import ParametricSeismicSource
 from openquake.hazardlib.geo.surface.complex_fault import ComplexFaultSurface
@@ -186,25 +185,6 @@ class ComplexFaultSource(ParametricSeismicSource):
         self.edges = edges
         self.rake = rake
 
-    def get_rupture_enclosing_polygon(self, dilation=0):
-        """
-        Uses :meth:`openquake.hazardlib.geo.surface.complex_fault.ComplexFaultSurface.surface_projection_from_fault_data`
-        for getting the fault's surface projection and then calls
-        its :meth:`~openquake.hazardlib.geo.polygon.Polygon.dilate`
-        method passing in ``dilation`` parameter.
-
-        See :meth:`superclass method
-        <openquake.hazardlib.source.base.BaseSeismicSource.get_rupture_enclosing_polygon>`
-        for parameter and return value definition.
-        """
-        polygon = ComplexFaultSurface.surface_projection_from_fault_data(
-            self.edges
-        )
-        if dilation:
-            return polygon.dilate(dilation)
-        else:
-            return polygon
-
     def iter_ruptures(self):
         """
         See :meth:
@@ -216,7 +196,7 @@ class ComplexFaultSource(ParametricSeismicSource):
         whole_fault_surface = ComplexFaultSurface.from_fault_data(
             self.edges, self.rupture_mesh_spacing
         )
-        whole_fault_mesh = whole_fault_surface.get_mesh()
+        whole_fault_mesh = whole_fault_surface.mesh
         cell_center, cell_length, cell_width, cell_area = (
             whole_fault_mesh.get_cell_dimensions()
         )
@@ -252,7 +232,7 @@ class ComplexFaultSource(ParametricSeismicSource):
         """
         whole_fault_surface = ComplexFaultSurface.from_fault_data(
             self.edges, self.rupture_mesh_spacing)
-        whole_fault_mesh = whole_fault_surface.get_mesh()
+        whole_fault_mesh = whole_fault_surface.mesh
         cell_center, cell_length, cell_width, cell_area = (
             whole_fault_mesh.get_cell_dimensions())
         self._nr = []
@@ -289,3 +269,11 @@ class ComplexFaultSource(ParametricSeismicSource):
             src.num_ruptures = self._nr[i]
             for s in split(src):
                 yield s
+
+    @property
+    def polygon(self):
+        """
+        The underlying polygon
+        `"""
+        return ComplexFaultSurface.surface_projection_from_fault_data(
+            self.edges)

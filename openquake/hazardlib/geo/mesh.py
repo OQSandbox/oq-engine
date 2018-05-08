@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2012-2017 GEM Foundation
+# Copyright (C) 2012-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -62,19 +62,18 @@ def surface_to_mesh(surface):
     """
     if hasattr(surface, 'surfaces'):  # multiplanar surfaces
         n = len(surface.surfaces)
-        arr = build_array([[s.corner_lons, s.corner_lats, s.corner_depths]
-                           for s in surface.surfaces]).reshape(n, 2, 2)
-    else:
-        mesh = surface.mesh
-        if mesh is None:  # planar surface
-            arr = build_array([[surface.corner_lons,
-                                surface.corner_lats,
-                                surface.corner_depths]]).reshape(1, 2, 2)
-        else:  # general surface
-            shp = (1,) + mesh.lons.shape
-            arr = build_array(
-                [[mesh.lons, mesh.lats, mesh.depths]]).reshape(shp)
-    return arr
+        return build_array([[s.corner_lons, s.corner_lats, s.corner_depths]
+                            for s in surface.surfaces]).reshape(n, 2, 2)
+    mesh = surface.mesh
+    if mesh is None:  # planar surface
+        return build_array([[surface.corner_lons,
+                             surface.corner_lats,
+                             surface.corner_depths]]).reshape(1, 2, 2)
+    if len(mesh.lons.shape) == 1:  # 1D mesh
+        shp = (1, 1) + mesh.lons.shape
+    else:  # 2D mesh
+        shp = (1,) + mesh.lons.shape
+    return build_array([[mesh.lons, mesh.lats, mesh.depths]]).reshape(shp)
 
 
 class Mesh(object):
@@ -101,10 +100,6 @@ class Mesh(object):
     DIST_TOLERANCE = 0.005
 
     def __init__(self, lons, lats, depths=None):
-        assert (isinstance(lons, numpy.ndarray) and
-                isinstance(lats, numpy.ndarray) and
-                (depths is None or isinstance(depths, numpy.ndarray))
-                ), (type(lons), type(lats), type(depths))
         assert ((lons.shape == lats.shape) and
                 (depths is None or depths.shape == lats.shape)
                 ), (lons.shape, lats.shape)
@@ -114,15 +109,24 @@ class Mesh(object):
         self.depths = depths
 
     @classmethod
-    def from_coords(cls, coords):
+    def from_coords(cls, coords, sort=True):
         """
         Create a mesh object from a list of 3D coordinates (by sorting them)
 
         :params coords: list of coordinates
+        :param sort: flag (default True)
         :returns: a :class:`Mesh` instance
         """
-        lons, lats, depths = zip(*coords)
-        return cls(numpy.array(lons), numpy.array(lats), numpy.array(depths))
+        coords = list(coords)
+        if sort:
+            coords.sort()
+        if len(coords[0]) == 2:  # 2D coordinates
+            lons, lats = zip(*coords)
+            depths = None
+        else:  # 3D coordinates
+            lons, lats, depths = zip(*coords)
+            depths = numpy.array(depths)
+        return cls(numpy.array(lons), numpy.array(lats), depths)
 
     @classmethod
     def from_points_list(cls, points):
@@ -302,8 +306,7 @@ class Mesh(object):
             self.lons.reshape(self.lons.shape + (1, )),
             self.lats.reshape(self.lats.shape + (1, )),
             self.lons,
-            self.lats
-        )
+            self.lats)
         return numpy.matrix(distances, copy=False)
 
     def _get_proj_convex_hull(self):
@@ -318,93 +321,16 @@ class Mesh(object):
             on number of points in the mesh and their arrangement.
         """
         # create a projection centered in the center of points collection
-        proj = geo_utils.get_orthographic_projection(
-            *geo_utils.get_spherical_bounding_box(self.lons, self.lats)
-        )
+        proj = geo_utils.OrthographicProjection(
+            *geo_utils.get_spherical_bounding_box(self.lons, self.lats))
+
         # project all the points and create a shapely multipoint object.
         # need to copy an array because otherwise shapely misinterprets it
         coords = numpy.transpose(proj(self.lons.flatten(),
                                       self.lats.flatten())).copy()
         multipoint = shapely.geometry.MultiPoint(coords)
-        # create a 2d polygon from a convex hull around that multipoint.
-        polygon2d = multipoint.convex_hull
-        return proj, polygon2d
-
-    def _get_proj_enclosing_polygon(self):
-        """
-        Create a projection centered in the center of this mesh and define
-        a minimum polygon in that projection, enveloping all the points
-        of the mesh.
-
-        In :class:`Mesh` this is equivalent to :meth:`_get_proj_convex_hull`.
-        """
-        return self._get_proj_convex_hull()
-
-    def get_convex_hull(self):
-        """
-        Get a convex polygon object that contains projections of all the points
-        of the mesh.
-
-        :returns:
-            Instance of :class:`openquake.hazardlib.geo.polygon.Polygon` that
-            is a convex hull around all the points in this mesh. If the
-            original mesh had only one point, the resulting polygon has a
-            square shape with a side length of 10 meters. If there were only
-            two points, resulting polygon is a stripe 10 meters wide.
-        """
-        proj, polygon2d = self._get_proj_convex_hull()
-        # if mesh had only one point, the convex hull is a point. if there
-        # were two, it is a line string. we need to return a convex polygon
-        # object, so extend that area-less geometries by some arbitrarily
-        # small distance.
-        if isinstance(polygon2d, (shapely.geometry.LineString,
-                                  shapely.geometry.Point)):
-            polygon2d = polygon2d.buffer(self.DIST_TOLERANCE, 1)
-
-        # avoid circular imports
-        from openquake.hazardlib.geo.polygon import Polygon
-        return Polygon._from_2d(polygon2d, proj)
-
-
-class RectangularMesh(Mesh):
-    """
-    A specification of :class:`Mesh` that requires coordinate numpy-arrays
-    to be two-dimensional.
-
-    Rectangular mesh is meant to represent not just an unordered collection
-    of points but rather a sort of table of points, where index of the point
-    in a mesh is related to it's position with respect to neighbouring points.
-    """
-    def __init__(self, lons, lats, depths=None):
-        super(RectangularMesh, self).__init__(lons, lats, depths)
-        assert lons.ndim == 2
-
-    @classmethod
-    def from_points_list(cls, points):
-        """
-        Create a rectangular mesh object from a list of lists of points.
-        Lists in a list are supposed to have the same length.
-
-        :param point:
-            List of lists of :class:`~openquake.hazardlib.geo.point.Point`
-            objects.
-        """
-        assert points is not None and len(points) > 0 and len(points[0]) > 0, \
-            'list of at least one non-empty list of points is required'
-        lons = numpy.zeros((len(points), len(points[0])), dtype=float)
-        lats = lons.copy()
-        depths = lons.copy()
-        num_cols = len(points[0])
-        for i, row in enumerate(points):
-            assert len(row) == num_cols, \
-                   'lists of points are not of uniform length'
-            for j, point in enumerate(row):
-                lons[i][j] = point.longitude
-                lats[i][j] = point.latitude
-                depths[i][j] = point.depth
-        if not depths.any():
-            depths = None
-        return cls(lons, lats, depths)
+        # create a 2d polygon from a convex hull around that multipoint
+        return proj, multipoint.convex_hull
 
     def get_joyner_boore_distance(self, mesh):
         """
@@ -412,7 +338,7 @@ class RectangularMesh(Mesh):
         Point's depth is ignored.
 
         See
-        :meth:`openquake.hazardlib.geo.surface.base.BaseQuadrilateralSurface.get_joyner_boore_distance`
+        :meth:`openquake.hazardlib.geo.surface.base.BaseSurface.get_joyner_boore_distance`
         for definition of this distance.
 
         :returns:
@@ -495,16 +421,18 @@ class RectangularMesh(Mesh):
             Same structure as :meth:`Mesh._get_proj_convex_hull`.
         """
         if self.lons.size < 4:
-            # the mesh doesn't contain even a single cell, use :class:`Mesh`
-            # method implementation (which would dilate the point or the line)
-            return super(RectangularMesh, self)._get_proj_enclosing_polygon()
+            # the mesh doesn't contain even a single cell
+            return self._get_proj_convex_hull()
 
-        proj = geo_utils.get_orthographic_projection(
-            *geo_utils.get_spherical_bounding_box(self.lons.flatten(),
-                                                  self.lats.flatten())
-        )
-        mesh2d = numpy.array(proj(self.lons.transpose(),
-                                  self.lats.transpose())).transpose()
+        proj = geo_utils.OrthographicProjection(
+            *geo_utils.get_spherical_bounding_box(self.lons, self.lats))
+        if len(self.lons.shape) == 1:  # 1D mesh
+            lons = self.lons.reshape(len(self.lons), 1)
+            lats = self.lats.reshape(len(self.lats), 1)
+        else:  # 2D mesh
+            lons = self.lons.T
+            lats = self.lats.T
+        mesh2d = numpy.array(proj(lons, lats)).T
         lines = iter(mesh2d)
         # we iterate over horizontal stripes, keeping the "previous"
         # line of points. we keep it reversed, such that together
@@ -541,6 +469,72 @@ class RectangularMesh(Mesh):
             polygon = shapely.ops.cascaded_union(polygons) \
                                  .simplify(self.DIST_TOLERANCE)
         return proj, polygon
+
+    def get_convex_hull(self):
+        """
+        Get a convex polygon object that contains projections of all the points
+        of the mesh.
+
+        :returns:
+            Instance of :class:`openquake.hazardlib.geo.polygon.Polygon` that
+            is a convex hull around all the points in this mesh. If the
+            original mesh had only one point, the resulting polygon has a
+            square shape with a side length of 10 meters. If there were only
+            two points, resulting polygon is a stripe 10 meters wide.
+        """
+        proj, polygon2d = self._get_proj_convex_hull()
+        # if mesh had only one point, the convex hull is a point. if there
+        # were two, it is a line string. we need to return a convex polygon
+        # object, so extend that area-less geometries by some arbitrarily
+        # small distance.
+        if isinstance(polygon2d, (shapely.geometry.LineString,
+                                  shapely.geometry.Point)):
+            polygon2d = polygon2d.buffer(self.DIST_TOLERANCE, 1)
+
+        # avoid circular imports
+        from openquake.hazardlib.geo.polygon import Polygon
+        return Polygon._from_2d(polygon2d, proj)
+
+
+class RectangularMesh(Mesh):
+    """
+    A specification of :class:`Mesh` that requires coordinate numpy-arrays
+    to be two-dimensional.
+
+    Rectangular mesh is meant to represent not just an unordered collection
+    of points but rather a sort of table of points, where index of the point
+    in a mesh is related to it's position with respect to neighbouring points.
+    """
+    def __init__(self, lons, lats, depths=None):
+        super().__init__(lons, lats, depths)
+        assert lons.ndim == 2
+
+    @classmethod
+    def from_points_list(cls, points):
+        """
+        Create a rectangular mesh object from a list of lists of points.
+        Lists in a list are supposed to have the same length.
+
+        :param point:
+            List of lists of :class:`~openquake.hazardlib.geo.point.Point`
+            objects.
+        """
+        assert points is not None and len(points) > 0 and len(points[0]) > 0, \
+            'list of at least one non-empty list of points is required'
+        lons = numpy.zeros((len(points), len(points[0])), dtype=float)
+        lats = lons.copy()
+        depths = lons.copy()
+        num_cols = len(points[0])
+        for i, row in enumerate(points):
+            assert len(row) == num_cols, \
+                   'lists of points are not of uniform length'
+            for j, point in enumerate(row):
+                lons[i, j] = point.longitude
+                lats[i, j] = point.latitude
+                depths[i, j] = point.depth
+        if not depths.any():
+            depths = None
+        return cls(lons, lats, depths)
 
     def get_middle_point(self):
         """
@@ -605,14 +599,12 @@ class RectangularMesh(Mesh):
         """
         assert 1 not in self.lons.shape, (
             "inclination and azimuth are only defined for mesh of more than "
-            "one row and more than one column of points"
-        )
+            "one row and more than one column of points")
 
         if self.depths is not None:
             assert ((self.depths[1:] - self.depths[:-1]) >= 0).all(), (
                 "get_mean_inclination_and_azimuth() requires next mesh row "
-                "to be not shallower than the previous one"
-            )
+                "to be not shallower than the previous one")
 
         points, along_azimuth, updip, diag = self.triangulate()
 
@@ -697,8 +689,8 @@ class RectangularMesh(Mesh):
             # be only either -1 or 1 with zero values (when edge is pointing
             # strictly north or south) expressed as 1 (which means "don't
             # change the sign")
-            + 0.1
-        )
+            + 0.1)
+
         # the length of projection of azimuthal edge on norms_north is cosine
         # of edge's azimuth
         az_cos = numpy.sum(along_azimuth[:-1] * norms_north[:-1, :-1], axis=-1)
@@ -712,8 +704,7 @@ class RectangularMesh(Mesh):
         # bottom-right triangles
         sign = numpy.sign(numpy.sign(
             numpy.sum(along_azimuth[1:] * norms_west[1:, 1:], axis=-1))
-            + 0.1
-        )
+            + 0.1)
         az_cos = numpy.sum(along_azimuth[1:] * norms_north[1:, 1:], axis=-1)
         xx += numpy.sum(br_area * az_cos)
         yy += numpy.sum(br_area * sqrt(1 - az_cos * az_cos) * sign)

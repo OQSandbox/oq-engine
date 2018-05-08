@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2012-2017 GEM Foundation
+# Copyright (C) 2012-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -21,8 +21,8 @@ Module :mod:`openquake.hazardlib.site` defines :class:`Site`.
 """
 import numpy
 from shapely import geometry
-from openquake.baselib.python3compat import range
-from openquake.baselib.general import split_in_blocks
+from openquake.baselib.general import split_in_blocks, not_equal
+from openquake.hazardlib.geo.utils import fix_lon, cross_idl
 from openquake.hazardlib.geo.mesh import Mesh
 
 
@@ -142,9 +142,27 @@ class SiteCollection(object):
         ('z2pt5', numpy.float64),
         ('backarc', numpy.bool),
     ])
+    offset = 0  # different from 0 if there are tiles
 
     @classmethod
-    def from_points(cls, lons, lats, depths, sitemodel):
+    def from_shakemap(cls, shakemap_array):
+        """
+        Build a site collection from a shakemap array
+        """
+        self = object.__new__(cls)
+        self.indices = None
+        n = len(shakemap_array)
+        self.array = arr = numpy.zeros(n, self.dtype)
+        arr['sids'] = numpy.arange(n, dtype=numpy.uint32)
+        arr['lons'] = shakemap_array['lon']
+        arr['lats'] = shakemap_array['lat']
+        arr['depths'] = numpy.zeros(n)
+        arr['vs30'] = shakemap_array['vs30']
+        arr.flags.writeable = False
+        return self
+
+    @classmethod
+    def from_points(cls, lons, lats, depths=None, sitemodel=None):
         """
         Build the site collection from
 
@@ -153,9 +171,9 @@ class SiteCollection(object):
         :param lats:
             a sequence of latitudes
         :param depths:
-            a sequence of depths
+            a sequence of depths (or None)
         :param sitemodel:
-            an object containing the attributes
+            None or an object containing the attributes
             reference_vs30_value,
             reference_vs30_type,
             reference_depth_to_1pt0km_per_sec,
@@ -170,26 +188,37 @@ class SiteCollection(object):
         self.indices = None
         self.array = arr = numpy.zeros(len(lons), self.dtype)
         arr['sids'] = numpy.arange(len(lons), dtype=numpy.uint32)
-        arr['lons'] = numpy.array(lons)
+        arr['lons'] = fix_lon(numpy.array(lons))
         arr['lats'] = numpy.array(lats)
         arr['depths'] = numpy.array(depths)
-        arr['vs30'] = sitemodel.reference_vs30_value
-        arr['vs30measured'] = sitemodel.reference_vs30_type == 'measured'
-        arr['z1pt0'] = sitemodel.reference_depth_to_1pt0km_per_sec
-        arr['z2pt5'] = sitemodel.reference_depth_to_2pt5km_per_sec
-        arr['backarc'] = sitemodel.reference_backarc
-        arr.flags.writeable = False
+        if sitemodel is None:
+            pass
+        elif hasattr(sitemodel, 'reference_vs30_value'):  # oqparam
+            arr['vs30'] = sitemodel.reference_vs30_value
+            arr['vs30measured'] = sitemodel.reference_vs30_type == 'measured'
+            arr['z1pt0'] = sitemodel.reference_depth_to_1pt0km_per_sec
+            arr['z2pt5'] = sitemodel.reference_depth_to_2pt5km_per_sec
+            arr['backarc'] = sitemodel.reference_backarc
+        elif 'vs30' in sitemodel.dtype.names:  # site params
+            for name in sitemodel.dtype.names[2:]:  # except lon, lat
+                arr[name] = sitemodel[name]
         return self
 
-    @classmethod
-    def filtered(cls, indices, array):
+    def filtered(self, indices):
         """
-        :returns: a filtered SiteCollection instance
+        :param indices:
+           a subset of indices in the range [0 .. tot_sites - 1]
+        :returns:
+           a filtered SiteCollection instance if `indices` is a proper subset
+           of the available indices, otherwise returns the full SiteCollection
         """
-        self = object.__new__(cls)
-        self.indices = indices
-        self.array = array
-        return self
+        if len(indices) == len(self.complete):
+            return self.complete
+        new = object.__new__(self.__class__)
+        new.indices = numpy.uint32(sorted(indices))
+        new.array = self.array
+        new.offset = self.offset
+        return new
 
     def __init__(self, sites):
         """
@@ -219,10 +248,9 @@ class SiteCollection(object):
         arr.flags.writeable = False
 
     def __eq__(self, other):
-        arr = self.array == other.array
-        if isinstance(arr, numpy.ndarray):
-            return arr.all()
-        return arr
+        if not_equal(self.indices, other.indices):
+            return False
+        return (self.array == other.array).all()
 
     def __ne__(self, other):
         return not self.__eq__(other)
@@ -261,11 +289,14 @@ class SiteCollection(object):
         :param hint: hint for how many tiles to generate
         """
         tiles = []
+        offset = 0
         for seq in split_in_blocks(range(len(self)), hint or 1):
             sc = SiteCollection.__new__(SiteCollection)
             sc.indices = None
             sc.array = self.array[numpy.array(seq, int)]
+            sc.offset = offset
             tiles.append(sc)
+            offset += len(seq)
         return tiles
 
     def __iter__(self):
@@ -305,7 +336,7 @@ class SiteCollection(object):
             indices, = mask.nonzero()
         else:
             indices = self.indices.take(mask.nonzero()[0])
-        return SiteCollection.filtered(indices, self.array)
+        return self.filtered(indices)
 
     def within(self, region):
         """
@@ -317,8 +348,31 @@ class SiteCollection(object):
             for rec in self.array])
         return self.complete.filter(mask)
 
+    def within_bbox(self, bbox):
+        """
+        :param bbox:
+            a quartet (min_lon, min_lat, max_lon, max_lat)
+        :returns:
+            a filtered SiteCollection within the bounding box or None
+        """
+        min_lon, min_lat, max_lon, max_lat = bbox
+        arr = self.array if self.indices is None else self.array[self.indices]
+        lons, lats = arr['lons'], arr['lats']
+        if cross_idl(lons.min(), lons.max()) or cross_idl(min_lon, max_lon):
+            lons = lons % 360
+            min_lon, max_lon = min_lon % 360, max_lon % 360
+        mask = (min_lon < lons) * (lons < max_lon) * \
+               (min_lat < lats) * (lats < max_lat)
+        return self.filter(mask)
+
     def __getstate__(self):
         return dict(array=self.array, indices=self.indices)
+
+    def __getitem__(self, sid):
+        """
+        Return a site record
+        """
+        return self.array[sid]
 
     def __getattr__(self, name):
         if name not in ('vs30 vs30measured z1pt0 z2pt5 backarc lons lats '
@@ -339,4 +393,6 @@ class SiteCollection(object):
 
     def __repr__(self):
         total_sites = len(self.array)
-        return '<SiteCollection with %d/%d sites>' % (len(self), total_sites)
+        offset = ', offset=%d' % self.offset if self.offset else ''
+        return '<SiteCollection with %d/%d sites%s>' % (
+            len(self), total_sites, offset)

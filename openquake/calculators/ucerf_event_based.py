@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2015-2017 GEM Foundation
+# Copyright (C) 2015-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -30,11 +30,12 @@ from openquake.baselib.general import AccumDict
 from openquake.baselib.python3compat import zip
 from openquake.baselib import parallel
 from openquake.hazardlib import nrml
+from openquake.hazardlib.calc import stochastic
 from openquake.risklib import riskinput
 from openquake.commonlib import readinput, source, calc, util
 from openquake.calculators import base, event_based, getters
 from openquake.calculators.event_based_risk import (
-    EbriskCalculator, event_based_risk)
+    EbrCalculator, event_based_risk)
 
 from openquake.hazardlib.geo.surface.multi import MultiSurface
 from openquake.hazardlib.pmf import PMF
@@ -58,6 +59,7 @@ U16 = numpy.uint16
 U32 = numpy.uint32
 U64 = numpy.uint64
 F32 = numpy.float32
+TWO16 = 2 ** 16
 
 # DEFAULT VALUES FOR UCERF BACKGROUND MODELS
 DEFAULT_MESH_SPACING = 1.0
@@ -235,7 +237,7 @@ def get_rupture_surface(mag, nodal_plane, hypocenter, msr,
         vertical_increment=rup_proj_height / 2,
         azimuth=(nodal_plane.strike + theta) % 360
     )
-    return PlanarSurface(mesh_spacing, nodal_plane.strike, nodal_plane.dip,
+    return PlanarSurface(nodal_plane.strike, nodal_plane.dip,
                          left_top, right_top, right_bottom, left_bottom)
 
 
@@ -555,8 +557,7 @@ class UCERFSource(object):
                 try:
                     surface_set.append(
                         ImperfectPlanarSurface.from_corner_points(
-                            mesh_spacing, top_left, top_right,
-                            bottom_right, bottom_left))
+                            top_left, top_right, bottom_right, bottom_left))
                 except ValueError as err:
                     raise ValueError(err, trace, top_left, top_right,
                                      bottom_right, bottom_left)
@@ -649,10 +650,6 @@ class UCERFSource(object):
                 sources.append(ps)
         return sources
 
-    def filter_sites_by_distance_to_source(self, integration_distance, sites):
-        # do not filter
-        return sites
-
 
 def build_idx_set(branch_id, start_date):
     """
@@ -690,24 +687,24 @@ def compute_ruptures(sources, src_filter, gsims, param, monitor):
     """
     [src] = sources
     res = AccumDict()
-    res.calc_times = AccumDict()
+    res.calc_times = []
     serial = 1
     sampl_mon = monitor('sampling ruptures', measuremem=True)
     filt_mon = monitor('filtering ruptures', measuremem=False)
     res.trt = DEFAULT_TRT
-    t0 = time.time()
     ebruptures = []
     background_sids = src.get_background_sids(src_filter)
     sitecol = src_filter.sitecol
     idist = src_filter.integration_distance
     for sample in range(param['samples']):
         for ses_idx, ses_seed in param['ses_seeds']:
-            seed = sample * event_based.TWO16 + ses_seed
+            seed = sample * TWO16 + ses_seed
             with sampl_mon:
                 rups, n_occs = src.generate_event_set(
                     background_sids, src_filter, seed)
             with filt_mon:
                 for rup, n_occ in zip(rups, n_occs):
+                    rup.serial = serial
                     rup.seed = seed
                     try:
                         r_sites, rrup = idist.get_closest(sitecol, rup)
@@ -719,15 +716,11 @@ def compute_ruptures(sources, src_filter, gsims, param, monitor):
                     for _ in range(n_occ):
                         events.append((0, src.src_group_id, ses_idx, sample))
                     if events:
-                        evs = numpy.array(events, calc.event_dt)
-                        ebruptures.append(
-                            EBRupture(rup, indices, evs, serial))
+                        evs = numpy.array(events, stochastic.event_dt)
+                        ebruptures.append(EBRupture(rup, indices, evs))
                         serial += 1
-    res.num_events = event_based.set_eids(ebruptures)
+    res.num_events = len(stochastic.set_eids(ebruptures))
     res[src.src_group_id] = ebruptures
-    res.calc_times[src.src_group_id] = {
-        src.source_id:
-        numpy.array([src.weight, len(sitecol), time.time() - t0, 1])}
     if not param['save_ruptures']:
         res.events_by_grp = {grp_id: event_based.get_events(res[grp_id])
                              for grp_id in res}
@@ -752,7 +745,8 @@ def get_composite_source_model(oq):
         sm.src_groups = [sg]
         sg.sources = [sg[0].new(sm.ordinal, sm.names)]
         source_models.append(sm)
-    return source.CompositeSourceModel(gsim_lt, smlt, source_models)
+    return source.CompositeSourceModel(gsim_lt, smlt, source_models,
+                                       oq.optimize_same_id_sources)
 
 
 @base.calculators.add('ucerf_rupture')
@@ -862,7 +856,7 @@ class UCERFHazardCalculator(event_based.EventBasedCalculator):
 
 
 @base.calculators.add('ucerf_risk')
-class UCERFRiskCalculator(EbriskCalculator):
+class UCERFRiskCalculator(EbrCalculator):
     """
     Event based risk calculator for UCERF, parallelizing on the source models
     """

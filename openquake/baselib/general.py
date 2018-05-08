@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright (C) 2014-2017 GEM Foundation
+# Copyright (C) 2014-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -28,6 +28,7 @@ import copy
 import math
 import socket
 import random
+import atexit
 import zipfile
 import operator
 import warnings
@@ -316,6 +317,9 @@ def assert_close(a, b, rtol=1e-07, atol=0, context=None):
     raise AssertionError('%r != %r %s' % (a, b, ctx))
 
 
+_tmp_paths = []
+
+
 def writetmp(content=None, dir=None, prefix="tmp", suffix="tmp"):
     """Create temporary file with the given content.
 
@@ -331,6 +335,7 @@ def writetmp(content=None, dir=None, prefix="tmp", suffix="tmp"):
         if not os.path.exists(dir):
             os.makedirs(dir)
     fh, path = tempfile.mkstemp(dir=dir, prefix=prefix, suffix=suffix)
+    _tmp_paths.append(path)
     if content:
         fh = os.fdopen(fh, "wb")
         if hasattr(content, 'encode'):
@@ -338,6 +343,16 @@ def writetmp(content=None, dir=None, prefix="tmp", suffix="tmp"):
         fh.write(content)
         fh.close()
     return path
+
+
+@atexit.register
+def removetmp():
+    """
+    Remove the temporary files created by writetmp
+    """
+    for path in _tmp_paths:
+        if os.path.exists(path):  # not removed yet
+            os.remove(path)
 
 
 def git_suffix(fname):
@@ -360,7 +375,7 @@ def git_suffix(fname):
                 cwd=os.path.dirname(git_path)).strip()
             gh = "-git" + decode(gh) if gh else ''
             return gh
-        except:
+        except Exception:
             # trapping everything on purpose; git may not be installed or it
             # may not work properly
             pass
@@ -685,8 +700,8 @@ class DictArray(collections.Mapping):
     ...      f['d'] = d
     ...      f['d']
     <DictArray
-    PGA: [ 0.01  0.02  0.04]
-    PGV: [ 0.1  0.2]>
+    PGA: [0.01 0.02 0.04]
+    PGV: [0.1 0.2]>
 
     The DictArray maintains the lexicographic order of the keys.
     """
@@ -812,6 +827,32 @@ def get_array(array, **kw):
     for name, value in kw.items():
         array = array[array[name] == value]
     return array
+
+
+def not_equal(array_or_none1, array_or_none2):
+    """
+    Compare two arrays that can also be None or have diffent shapes
+    and returns a boolean.
+
+    >>> a1 = numpy.array([1])
+    >>> a2 = numpy.array([2])
+    >>> a3 = numpy.array([2, 3])
+    >>> not_equal(a1, a2)
+    True
+    >>> not_equal(a1, a3)
+    True
+    >>> not_equal(a1, None)
+    True
+    """
+    if array_or_none1 is None and array_or_none2 is None:
+        return False
+    elif array_or_none1 is None and array_or_none2 is not None:
+        return True
+    elif array_or_none1 is not None and array_or_none2 is None:
+        return True
+    if array_or_none1.shape != array_or_none2.shape:
+        return True
+    return (array_or_none1 != array_or_none2).any()
 
 
 def humansize(nbytes, suffixes=('B', 'KB', 'MB', 'GB', 'TB', 'PB')):
@@ -944,3 +985,23 @@ def detach_process():
     fork_then_exit_parent()
     os.setsid()
     fork_then_exit_parent()
+
+
+def println(msg):
+    """
+    Convenience function to print messages on a single line in the terminal
+    """
+    sys.stdout.write(msg)
+    sys.stdout.flush()
+    sys.stdout.write('\x08' * len(msg))
+    sys.stdout.flush()
+
+
+def debug(templ, *args):
+    """
+    Append a debug line to the file /tmp/debug.txt
+    """
+    msg = templ % args if args else templ
+    tmp = tempfile.gettempdir()
+    with open(os.path.join(tmp, 'debug.txt'), 'a', encoding='utf8') as f:
+        f.write(msg + '\n')

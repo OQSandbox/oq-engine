@@ -3,8 +3,8 @@ Scenario Risk Test
 
 ============== ===================
 checksum32     4,057,024,737      
-date           2018-02-25T06:44:28
-engine_version 2.10.0-git1f7c0c0  
+date           2018-04-30T11:23:01
+engine_version 3.1.0-gitb0812f0   
 ============== ===================
 
 num_sites = 27, num_levels = 8
@@ -43,11 +43,11 @@ structural_vulnerability `vulnerability_model_test1.xml <vulnerability_model_tes
 
 Composite source model
 ----------------------
-========= ====== =============== ================
-smlt_path weight gsim_logic_tree num_realizations
-========= ====== =============== ================
-b_1       1.000  trivial(1)      1/1             
-========= ====== =============== ================
+========= ======= =============== ================
+smlt_path weight  gsim_logic_tree num_realizations
+========= ======= =============== ================
+b_1       1.00000 trivial(1)      1/1             
+========= ======= =============== ================
 
 Realizations per (TRT, GSIM)
 ----------------------------
@@ -66,22 +66,22 @@ deductibile     absolute
 insurance_limit absolute
 =============== ========
 
-======== ===== ====== === === ========= ==========
-taxonomy mean  stddev min max num_sites num_assets
-2        1.000 0.0    1   1   4         4         
-4        1.000 0.0    1   1   16        16        
-3        1.000 0.0    1   1   5         5         
-1        1.000 0.0    1   1   2         2         
-*ALL*    1.000 0.0    1   1   27        27        
-======== ===== ====== === === ========= ==========
+======== ======= ====== === === ========= ==========
+taxonomy mean    stddev min max num_sites num_assets
+2        1.00000 0.0    1   1   4         4         
+4        1.00000 0.0    1   1   16        16        
+3        1.00000 0.0    1   1   5         5         
+1        1.00000 0.0    1   1   2         2         
+*ALL*    1.00000 0.0    1   1   27        27        
+======== ======= ====== === === ========= ==========
 
 Slowest operations
 ------------------
 ======================= ========= ========= ======
 operation               time_sec  memory_mb counts
 ======================= ========= ========= ======
-building riskinputs     0.042     0.0       1     
-reading exposure        0.003     0.0       1     
-building epsilons       6.225E-04 0.0       1     
-reading site collection 5.126E-05 0.0       1     
+building riskinputs     0.08462   0.0       1     
+reading exposure        0.00605   0.0       1     
+reading site collection 0.00487   0.0       1     
+building epsilons       7.536E-04 0.0       1     
 ======================= ========= ========= ======

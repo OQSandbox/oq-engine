@@ -2,9 +2,9 @@ scenario hazard
 ===============
 
 ============== ===================
-checksum32     3,387,430,932      
-date           2018-02-25T06:44:28
-engine_version 2.10.0-git1f7c0c0  
+checksum32     2,641,770,167      
+date           2018-04-30T11:23:01
+engine_version 3.1.0-gitb0812f0   
 ============== ===================
 
 num_sites = 1, num_levels = 1
@@ -41,11 +41,11 @@ rupture_model `rupture_model.xml <rupture_model.xml>`_
 
 Composite source model
 ----------------------
-========= ====== =============== ================
-smlt_path weight gsim_logic_tree num_realizations
-========= ====== =============== ================
-b_1       1.000  trivial(1)      1/1             
-========= ====== =============== ================
+========= ======= =============== ================
+smlt_path weight  gsim_logic_tree num_realizations
+========= ======= =============== ================
+b_1       1.00000 trivial(1)      1/1             
+========= ======= =============== ================
 
 Realizations per (TRT, GSIM)
 ----------------------------
@@ -64,16 +64,16 @@ deductibile     absolute
 insurance_limit absolute
 =============== ========
 
-======== ===== ====== === === ========= ==========
-taxonomy mean  stddev min max num_sites num_assets
-tax1     1.000 NaN    1   1   1         1         
-======== ===== ====== === === ========= ==========
+======== ======= ====== === === ========= ==========
+taxonomy mean    stddev min max num_sites num_assets
+tax1     1.00000 NaN    1   1   1         1         
+======== ======= ====== === === ========= ==========
 
 Slowest operations
 ------------------
-======================= ========= ========= ======
-operation               time_sec  memory_mb counts
-======================= ========= ========= ======
-reading exposure        6.471E-04 0.0       1     
-reading site collection 5.245E-06 0.0       1     
-======================= ========= ========= ======
+======================= ======== ========= ======
+operation               time_sec memory_mb counts
+======================= ======== ========= ======
+reading exposure        0.00440  0.0       1     
+reading site collection 0.00103  0.0       1     
+======================= ======== ========= ======

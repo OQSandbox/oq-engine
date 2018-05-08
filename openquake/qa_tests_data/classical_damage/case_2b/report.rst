@@ -2,9 +2,9 @@ Classical PSHA-Based Hazard
 ===========================
 
 ============== ===================
-checksum32     4,062,010,034      
-date           2018-02-25T06:41:59
-engine_version 2.10.0-git1f7c0c0  
+checksum32     2,135,514,196      
+date           2018-04-30T11:21:30
+engine_version 3.1.0-gitb0812f0   
 ============== ===================
 
 num_sites = 1, num_levels = 28
@@ -18,8 +18,8 @@ maximum_distance                {'default': 200.0}
 investigation_time              1.0               
 ses_per_logic_tree_path         1                 
 truncation_level                3.0               
-rupture_mesh_spacing            1.0               
-complex_fault_mesh_spacing      1.0               
+rupture_mesh_spacing            2.0               
+complex_fault_mesh_spacing      2.0               
 width_of_mfd_bin                0.1               
 area_source_discretization      20.0              
 ground_motion_correlation_model None              
@@ -44,11 +44,11 @@ structural_fragility    `fragility_model.xml <fragility_model.xml>`_
 
 Composite source model
 ----------------------
-========= ====== =============== ================
-smlt_path weight gsim_logic_tree num_realizations
-========= ====== =============== ================
-b1        1.000  trivial(1)      1/1             
-========= ====== =============== ================
+========= ======= =============== ================
+smlt_path weight  gsim_logic_tree num_realizations
+========= ======= =============== ================
+b1        1.00000 trivial(1)      1/1             
+========= ======= =============== ================
 
 Required parameters per tectonic region type
 --------------------------------------------
@@ -71,24 +71,8 @@ Number of ruptures per tectonic region type
 ================ ====== ==================== ============ ============
 source_model     grp_id trt                  eff_ruptures tot_ruptures
 ================ ====== ==================== ============ ============
-source_model.xml 0      Active Shallow Crust 1,694        1,694       
+source_model.xml 0      Active Shallow Crust 482          482         
 ================ ====== ==================== ============ ============
-
-Informational data
-------------------
-======================= ==================================================================================
-count_ruptures.received tot 10.47 KB, max_per_task 825 B                                                  
-count_ruptures.sent     sources 13.88 KB, srcfilter 9.17 KB, param 7.87 KB, monitor 4.19 KB, gsims 1.52 KB
-hazard.input_weight     1694.0                                                                            
-hazard.n_imts           1                                                                                 
-hazard.n_levels         28                                                                                
-hazard.n_realizations   1                                                                                 
-hazard.n_sites          1                                                                                 
-hazard.n_sources        1                                                                                 
-hazard.output_weight    28.0                                                                              
-hostname                tstation.gem.lan                                                                  
-require_epsilons        False                                                                             
-======================= ==================================================================================
 
 Exposure model
 --------------
@@ -99,25 +83,25 @@ deductibile     absolute
 insurance_limit absolute
 =============== ========
 
-======== ===== ====== === === ========= ==========
-taxonomy mean  stddev min max num_sites num_assets
-Wood     1.000 NaN    1   1   1         1         
-======== ===== ====== === === ========= ==========
+======== ======= ====== === === ========= ==========
+taxonomy mean    stddev min max num_sites num_assets
+Wood     1.00000 NaN    1   1   1         1         
+======== ======= ====== === === ========= ==========
 
 Slowest sources
 ---------------
-========= ================= ============ ========= ========= =========
-source_id source_class      num_ruptures calc_time num_sites num_split
-========= ================= ============ ========= ========= =========
-1         SimpleFaultSource 1,694        0.076     16        15       
-========= ================= ============ ========= ========= =========
+========= ================= ============ ========= ========== ========= ========= ======
+source_id source_class      num_ruptures calc_time split_time num_sites num_split events
+========= ================= ============ ========= ========== ========= ========= ======
+1         SimpleFaultSource 482          4.957E-04 1.826E-04  15        15        0     
+========= ================= ============ ========= ========== ========= ========= ======
 
 Computation times by source typology
 ------------------------------------
 ================= ========= ======
 source_class      calc_time counts
 ================= ========= ======
-SimpleFaultSource 0.076     1     
+SimpleFaultSource 4.957E-04 1     
 ================= ========= ======
 
 Duplicated sources
@@ -126,22 +110,53 @@ There are no duplicated sources
 
 Information about the tasks
 ---------------------------
-================== ===== ====== ===== ===== =========
-operation-duration mean  stddev min   max   num_tasks
-count_ruptures     0.011 0.005  0.003 0.020 13       
-================== ===== ====== ===== ===== =========
+================== ======= ========= ======= ======= =========
+operation-duration mean    stddev    min     max     num_tasks
+count_ruptures     0.00242 5.794E-04 0.00158 0.00318 6        
+================== ======= ========= ======= ======= =========
+
+Fastest task
+------------
+taskno=1, weight=60, duration=0 s, sources="1"
+
+======== ======= ====== === === =
+variable mean    stddev min max n
+======== ======= ====== === === =
+nsites   1.00000 NaN    1   1   1
+weight   60      NaN    60  60  1
+======== ======= ====== === === =
+
+Slowest task
+------------
+taskno=6, weight=77, duration=0 s, sources="1"
+
+======== ======= ======= ======= === =
+variable mean    stddev  min     max n
+======== ======= ======= ======= === =
+nsites   1.00000 0.0     1       1   6
+weight   12      8.01041 2.00000 24  6
+======== ======= ======= ======= === =
+
+Informational data
+------------------
+============== ========================================================================= ========
+task           sent                                                                      received
+count_ruptures sources=8.94 KB srcfilter=4.2 KB param=3.6 KB monitor=1.93 KB gsims=720 B 2.1 KB  
+============== ========================================================================= ========
 
 Slowest operations
 ------------------
 ============================== ========= ========= ======
 operation                      time_sec  memory_mb counts
 ============================== ========= ========= ======
-total count_ruptures           0.137     1.746     13    
-managing sources               0.086     0.0       1     
-reading composite source model 0.010     0.0       1     
-store source_info              0.003     0.0       1     
-reading exposure               4.828E-04 0.0       1     
-aggregate curves               1.822E-04 0.0       13    
+managing sources               0.01507   0.0       1     
+total count_ruptures           0.01453   1.32031   6     
+reading composite source model 0.00539   0.0       1     
+store source_info              0.00311   0.0       1     
+reading exposure               0.00198   0.0       1     
+reading site collection        0.00145   0.0       1     
+splitting sources              5.679E-04 0.0       1     
+unpickling count_ruptures      1.998E-04 0.0       6     
+aggregate curves               8.631E-05 0.0       6     
 saving probability maps        2.694E-05 0.0       1     
-reading site collection        5.722E-06 0.0       1     
 ============================== ========= ========= ======

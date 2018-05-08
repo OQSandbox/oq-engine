@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2012-2017 GEM Foundation
+# Copyright (C) 2012-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -135,12 +135,12 @@ class ContextMaker(object):
                 for rlzi in rlzis:
                     self.gsim_by_rlzi[rlzi] = gsim
 
-    def make_distances_context(self, site_collection, rupture, dist_dict=()):
+    def make_distances_context(self, mesh, rupture, dist_dict=()):
         """
         Create distances context object for given site collection and rupture.
 
-        :param site_collection:
-            Instance of :class:`openquake.hazardlib.site.SiteCollection`.
+        :param mesh:
+            mesh of points coming from a filtered site collection
 
         :param rupture:
             Instance of
@@ -165,7 +165,7 @@ class ContextMaker(object):
             if param in dist_dict:  # already computed distances
                 distances = dist_dict[param]
             else:
-                distances = get_distances(rupture, site_collection.mesh, param)
+                distances = get_distances(rupture, mesh, param)
             setattr(dctx, param, distances)
         return dctx
 
@@ -268,7 +268,8 @@ class ContextMaker(object):
         sites, distances = self.maximum_distance.get_closest(
             site_collection, rupture, 'rjb', filter)
         sctx = self.make_sites_context(sites)
-        dctx = self.make_distances_context(sites, rupture, {'rjb': distances})
+        dctx = self.make_distances_context(
+            sites.mesh, rupture, {'rjb': distances})
         return (sctx, rctx, dctx)
 
     def filter_ruptures(self, src, sites):
@@ -369,7 +370,7 @@ class ContextMaker(object):
         """
         sitemesh = sitecol.mesh
         acc = AccumDict(accum=[])
-        ctx_mon = monitor('make_contexts', measuremem=False)
+        ctx_mon = monitor('disagg_contexts', measuremem=False)
         pne_mon = monitor('disaggregate_pne', measuremem=False)
         for rupture in ruptures:
             with ctx_mon:
@@ -462,7 +463,7 @@ class GroundShakingIntensityModel(with_metaclass(MetaGSIM)):
     #:     for more detailed description of dip and rake.
     #: ``ztor``
     #:     Depth of rupture's top edge in km. See
-    #:     :meth:`~openquake.hazardlib.geo.surface.base.BaseQuadrilateralSurface.get_top_edge_depth`.
+    #:     :meth:`~openquake.hazardlib.geo.surface.base.BaseSurface.get_top_edge_depth`.
     #:
     #: These parameters are available from the :class:`RuptureContext` object
     #: attributes with same names.
@@ -473,17 +474,17 @@ class GroundShakingIntensityModel(with_metaclass(MetaGSIM)):
     #:
     #: ``rrup``
     #:     Closest distance to rupture surface.  See
-    #:     :meth:`~openquake.hazardlib.geo.surface.base.BaseQuadrilateralSurface.get_min_distance`.
+    #:     :meth:`~openquake.hazardlib.geo.surface.base.BaseSurface.get_min_distance`.
     #: ``rjb``
     #:     Distance to rupture's surface projection. See
-    #:     :meth:`~openquake.hazardlib.geo.surface.base.BaseQuadrilateralSurface.get_joyner_boore_distance`.
+    #:     :meth:`~openquake.hazardlib.geo.surface.base.BaseSurface.get_joyner_boore_distance`.
     #: ``rx``
     #:     Perpendicular distance to rupture top edge projection.
-    #:     See :meth:`~openquake.hazardlib.geo.surface.base.BaseQuadrilateralSurface.get_rx_distance`.
+    #:     See :meth:`~openquake.hazardlib.geo.surface.base.BaseSurface.get_rx_distance`.
     #: ``ry0``
     #:     Horizontal distance off the end of the rupture measured parallel to
     #      strike. See:
-    #:     See :meth:`~openquake.hazardlib.geo.surface.base.BaseQuadrilateralSurface.get_ry0_distance`.
+    #:     See :meth:`~openquake.hazardlib.geo.surface.base.BaseSurface.get_ry0_distance`.
     #: ``rcdpp``
     #:     Direct point parameter for directivity effect centered on the site- and earthquake-specific
     #      average DPP used. See:

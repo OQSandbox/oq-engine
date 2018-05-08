@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2012-2017 GEM Foundation
+# Copyright (C) 2012-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -20,46 +20,65 @@
 Module :mod:`openquake.hazardlib.geo.utils` contains functions that are common
 to several geographical primitives and some other low-level spatial operations.
 """
+import math
+import logging
 import operator
 import collections
-try:
-    import rtree
-except:
-    rtree = None
+import rtree
 import numpy
 import shapely.geometry
 
 from openquake.hazardlib.geo import geodetic
-from openquake.hazardlib.geo.geodetic import (
-    EARTH_RADIUS, geodetic_distance, min_idx_dst)
+from openquake.hazardlib.geo.geodetic import EARTH_RADIUS, geodetic_distance
 from openquake.baselib.slots import with_slots
 
+U32 = numpy.uint32
+KM_TO_DEGREES = 0.0089932  # 1 degree == 111 km
+DEGREES_TO_RAD = 0.01745329252  # 1 radians = 57.295779513 degrees
 SphericalBB = collections.namedtuple('SphericalBB', 'west east north south')
 
 
-class GeographicObjects(object):
+def angular_distance(km, lat, lat2=None):
     """
-    Store a collection of geographic objects, i.e. objects with longitudes
-    and latitudes. By default extracts the coordinates from the attributes
-    .lon and .lat, but you can provide your own getters. It is possible
-    to extract the closest object to a given location by calling the
-    method .get_closest(lon, lat).
+    Return the angular distance of two points at the given latitude.
+
+    >>> '%.3f' % angular_distance(100, lat=40)
+    '1.174'
+    >>> '%.3f' % angular_distance(100, lat=80)
+    '5.179'
     """
-    def __init__(self, objects, getlon=operator.attrgetter('lon'),
-                 getlat=operator.attrgetter('lat')):
-        self.objects = list(objects)
-        lons, lats = [], []
-        for i, obj in enumerate(self.objects):
-            lon, lat = getlon(obj), getlat(obj)
-            lons.append(lon)
-            lats.append(lat)
-        self.lons, self.lats = numpy.array(lons), numpy.array(lats)
-        if rtree:
-            self.index = rtree.index.Index()
-            self.proj = OrthographicProjection.from_lons_lats(lons, lats)
-            xs, ys = self.proj(self.lons, self.lats)
-            for i, (x, y) in enumerate(zip(xs, ys)):
-                self.index.insert(i, (x, y, x, y))
+    if lat2 is not None:
+        # use the largest latitude to compute the angular distance
+        lat = max(abs(lat), abs(lat2))
+    return km * KM_TO_DEGREES / math.cos(lat * DEGREES_TO_RAD)
+
+
+class SiteAssociationError(Exception):
+    """Raised when there are no sites close enough"""
+
+
+class _GeographicObjects(object):
+    """
+    Store a collection of geographic objects, i.e. objects with lons, lats.
+    It is possible to extract the closest object to a given location by
+    calling the method .get_closest(lon, lat).
+    """
+    def __init__(self, objects):
+        self.objects = objects
+        if hasattr(objects, 'lons'):
+            self.lons = objects.lons
+            self.lats = objects.lats
+        elif isinstance(objects, numpy.ndarray):
+            self.lons = objects['lon']
+            self.lats = objects['lat']
+
+        self.proj = OrthographicProjection.from_lons_lats(
+            self.lons, self.lats)
+        xs, ys = self.proj(self.lons, self.lats)
+        self.index = rtree.index.Index()
+        # no http://toblerity.org/rtree/performance.html#use-stream-loading!
+        for i, (x, y) in enumerate(zip(xs, ys)):
+            self.index.insert(i, (x, y, x, y))
 
     def get_closest(self, lon, lat):
         """
@@ -70,15 +89,109 @@ class GeographicObjects(object):
         :param lat: latitude in degrees
         :param max_distance: distance in km (or None)
         """
-        if rtree:
-            x, y = self.proj(lon, lat)
-            idx = list(self.index.nearest((x, y, x, y), 1))[0]
-            min_dist = geodetic_distance(
-                lon, lat, self.lons[idx], self.lats[idx])
-        else:
-            zeros = numpy.zeros_like(self.lons)
-            idx, min_dist = min_idx_dst(self.lons, self.lats, zeros, lon, lat)
+        x, y = self.proj(lon, lat)
+        idx = list(self.index.nearest((x, y, x, y), 1))[0]
+        min_dist = geodetic_distance(
+            lon, lat, self.lons[idx], self.lats[idx])
         return self.objects[idx], min_dist
+
+    def assoc(self, sitecol, assoc_dist, mode):
+        """
+        :param sitecol: a (filtered) site collection
+        :param assoc_dist: the maximum distance for association
+        :param mode: 'strict', 'warn' or 'filter'
+        :returns: (filtered site collection, filtered objects)
+        """
+        assert mode in 'strict warn filter', mode
+        dic = {}
+        for sid, lon, lat in zip(sitecol.sids, sitecol.lons, sitecol.lats):
+            obj, distance = self.get_closest(lon, lat)
+            if assoc_dist is None:
+                dic[sid] = obj  # associate all
+            elif distance <= assoc_dist:
+                dic[sid] = obj  # associate within
+            elif mode == 'warn':
+                dic[sid] = obj  # associate outside
+                logging.warn('Association to %s km from site (%s %s)',
+                             distance, lon, lat)
+            elif mode == 'filter':
+                pass  # do not associate
+            elif mode == 'strict':
+                raise SiteAssociationError(
+                    'There is nothing closer than %s km '
+                    'to site (%s %s)' % (assoc_dist, lon, lat))
+        if not dic:
+            raise SiteAssociationError(
+                'No sites could be associated within %s km' % assoc_dist)
+        return (sitecol.filtered(dic),
+                numpy.array([dic[sid] for sid in sorted(dic)]))
+
+    def assoc2(self, assets_by_site, assoc_dist, mode):
+        """
+        Associated a list of assets by site to the site collection used
+        to instantiate GeographicObjects.
+
+        :param assets_by_sites: a list of lists of assets
+        :param assoc_dist: the maximum distance for association
+        :param mode: 'strict' or 'warn'
+        :returns: (filtered site collection, filtered assets by site)
+        """
+        assert mode in 'strict warn', mode
+        self.objects.filtered  # self.objects must be a SiteCollection
+        assets_by_sid = collections.defaultdict(list)
+        for assets in assets_by_site:
+            lon, lat = assets[0].location
+            obj, distance = self.get_closest(lon, lat)
+            if distance <= assoc_dist:
+                # keep the assets, otherwise discard them
+                assets_by_sid[obj['sids']].extend(assets)
+            elif mode == 'strict':
+                raise SiteAssociationError(
+                    'There is nothing closer than %s km '
+                    'to site (%s %s)' % (assoc_dist, lon, lat))
+            elif mode == 'warn':
+                logging.warn('Discarding %s, lon=%.5f, lat=%.5f',
+                             assets, lon, lat)
+        sids = sorted(assets_by_sid)
+        if not sids:
+            raise SiteAssociationError(
+                'Could not associate any site to any assets within the '
+                'asset_hazard_distance of %s km' % assoc_dist)
+        assets_by_site = [
+            sorted(assets_by_sid[sid], key=operator.attrgetter('ordinal'))
+            for sid in sids]
+        return self.objects.filtered(sids), assets_by_site
+
+
+def get_min_distance(mesh1, mesh2):
+    """
+    Get the minimum distance between 2D meshes by using rtree
+    """
+    go = _GeographicObjects(mesh1)
+    min_dist = min(go.get_closest(lon, lat)[1]
+                   for lon, lat in zip(mesh2.lons, mesh2.lats))
+    return min_dist
+
+
+def assoc(objects, sitecol, assoc_dist, mode):
+    """
+    Associate geographic objects to a site collection.
+
+    :param objects:
+        something with .lons, .lats or ['lon'] ['lat'], or a list of lists
+        of objects with a .location attribute (i.e. assets_by_site)
+    :param assoc_dist:
+        the maximum distance for association
+    :param mode:
+        if 'strict' fail if at least one site is not associated
+        if 'error' fail if all sites are not associated
+    :returns: (filtered site collection, filtered objects)
+    """
+    if isinstance(objects, numpy.ndarray) or hasattr(objects, 'lons'):
+        # objects is a geo array with lon, lat fields or a mesh-like instance
+        return _GeographicObjects(objects).assoc(sitecol, assoc_dist, mode)
+    else:  # objects is the list assets_by_site
+        return _GeographicObjects(sitecol).assoc2(objects, assoc_dist, mode)
 
 
 def clean_points(points):
@@ -121,7 +234,7 @@ def line_intersects_itself(lons, lats, closed_shape=False):
         return False
 
     west, east, north, south = get_spherical_bounding_box(lons, lats)
-    proj = get_orthographic_projection(west, east, north, south)
+    proj = OrthographicProjection(west, east, north, south)
 
     xx, yy = proj(lons, lats)
     if not shapely.geometry.LineString(list(zip(xx, yy))).is_simple:
@@ -149,6 +262,18 @@ def get_longitudinal_extent(lon1, lon2):
     return (lon2 - lon1 + 180) % 360 - 180
 
 
+def get_bounding_box(obj, maxdist):
+    """
+    Return the dilated bounding box of a geometric object
+    """
+    if hasattr(obj, 'get_bounding_box'):
+        return obj.get_bounding_box(maxdist)
+    bbox = obj.polygon.get_bbox()
+    a1 = maxdist * KM_TO_DEGREES
+    a2 = angular_distance(maxdist, bbox[1], bbox[3])
+    return bbox[0] - a2, bbox[1] - a1, bbox[2] + a2, bbox[3] + a1
+
+
 def get_spherical_bounding_box(lons, lats):
     """
     Given a collection of points find and return the bounding box,
@@ -168,11 +293,14 @@ def get_spherical_bounding_box(lons, lats):
     """
     north, south = numpy.max(lats), numpy.min(lats)
     west, east = numpy.min(lons), numpy.max(lons)
-    assert (-180 <= west <= 180) and (-180 <= east <= 180)
+    assert (-180 <= west <= 180) and (-180 <= east <= 180), (west, east)
     if get_longitudinal_extent(west, east) < 0:
         # points are lying on both sides of the international date line
         # (meridian 180). the actual west longitude is the lowest positive
         # longitude and east one is the highest negative.
+        if hasattr(lons, 'flatten'):
+            # fixes test_surface_crossing_international_date_line
+            lons = lons.flatten()
         west = min(lon for lon in lons if lon > 0)
         east = max(lon for lon in lons if lon < 0)
         if not all((get_longitudinal_extent(west, lon) >= 0
@@ -186,8 +314,40 @@ def get_spherical_bounding_box(lons, lats):
 @with_slots
 class OrthographicProjection(object):
     """
-    Callable object to compute orthographic projections. See the docstring
-    of get_orthographic_projection.
+    Callable OrthographicProjection object that can perform both forward
+    and reverse projection (converting from longitudes and latitudes to x
+    and y values on 2d-space and vice versa). The call takes three
+    arguments: first two are numpy arrays of longitudes and latitudes *or*
+    abscissae and ordinates of points to project and the third one
+    is a boolean that allows to choose what operation is requested --
+    is it forward or reverse one. ``True`` value given to third
+    positional argument (or keyword argument "reverse") indicates
+    that the projection of points in 2d space back to earth surface
+    is needed. The default value for "reverse" argument is ``False``,
+    which means forward projection (degrees to kilometers).
+
+    Raises ``ValueError`` in forward projection
+    mode if any of the target points is further than 90 degree
+    (along the great circle arc) from the projection center.
+
+    Parameters are given as floats, representing decimal degrees (first two
+    are longitudes and last two are latitudes). They define a bounding box
+    in a spherical coordinates of the collection of points that is about
+    to be projected. The center point of the projection (coordinates (0, 0)
+    in Cartesian space) is set to the middle point of that bounding box.
+    The resulting projection is defined for spherical coordinates that are
+    not further from the bounding box center than 90 degree on the great
+    circle arc.
+
+    The result projection is of type `Orthographic
+    <http://mathworld.wolfram.com/OrthographicProjection.html>`_.
+    This projection is prone to distance, area and angle distortions
+    everywhere outside of the center point, but still can be used for
+    checking shapes: verifying if line intersects itself (like in
+    :func:`line_intersects_itself`) or if point is inside of a polygon
+    (like in :meth:`openquake.hazardlib.geo.polygon.Polygon.discretize`). It
+    can be also used for measuring distance to an extent of around 700
+    kilometers (error doesn't exceed 1 km up until then).
     """
     _slots_ = ('west east north south lambda0 phi0 '
                'cos_phi0 sin_phi0 sin_pi_over_4').split()
@@ -247,49 +407,6 @@ class OrthographicProjection(object):
             return xx, yy
 
 
-def get_orthographic_projection(west, east, north, south):
-    """
-    Create and return a projection object for a given bounding box.
-
-    :returns:
-        callable OrthographicProjection object that can perform both forward
-        and reverse projection (converting from longitudes and latitudes to x
-        and y values on 2d-space and vice versa). The call takes three
-        arguments: first two are numpy arrays of longitudes and latitudes *or*
-        abscissae and ordinates of points to project and the third one
-        is a boolean that allows to choose what operation is requested --
-        is it forward or reverse one. ``True`` value given to third
-        positional argument (or keyword argument "reverse") indicates
-        that the projection of points in 2d space back to earth surface
-        is needed. The default value for "reverse" argument is ``False``,
-        which means forward projection (degrees to kilometers).
-
-        Raises ``ValueError`` in forward projection
-        mode if any of the target points is further than 90 degree
-        (along the great circle arc) from the projection center.
-
-    Parameters are given as floats, representing decimal degrees (first two
-    are longitudes and last two are latitudes). They define a bounding box
-    in a spherical coordinates of the collection of points that is about
-    to be projected. The center point of the projection (coordinates (0, 0)
-    in Cartesian space) is set to the middle point of that bounding box.
-    The resulting projection is defined for spherical coordinates that are
-    not further from the bounding box center than 90 degree on the great
-    circle arc.
-
-    The result projection is of type `Orthographic
-    <http://mathworld.wolfram.com/OrthographicProjection.html>`_.
-    This projection is prone to distance, area and angle distortions
-    everywhere outside of the center point, but still can be used for
-    checking shapes: verifying if line intersects itself (like in
-    :func:`line_intersects_itself`) or if point is inside of a polygon
-    (like in :meth:`openquake.hazardlib.geo.polygon.Polygon.discretize`). It
-    can be also used for measuring distance to an extent of around 700
-    kilometers (error doesn't exceed 1 km up until then).
-    """
-    return OrthographicProjection(west, east, north, south)
-
-
 def get_middle_point(lon1, lat1, lon2, lat2):
     """
     Given two points return the point exactly in the middle lying on the same
@@ -320,10 +437,10 @@ def spherical_to_cartesian(lons, lats, depths):
 
     :returns:
         ``numpy.array`` of 3d vectors representing points' coordinates in
-        Cartesian space. The array has the same shape as parameter arrays.
-        In particular it means that if ``lons`` and ``lats`` are scalars,
-        the result is a single 3d vector. Vector of length ``1`` represents
-        distance of 1 km.
+        Cartesian space in km. The array has shape `lons.shape + (3,)`.
+        In particular, if ``lons`` and ``lats`` are scalars the result is a
+        3D vector and if they are vectors the result is a matrix of shape
+        (N, 3).
 
     See also :func:`cartesian_to_spherical`.
     """
@@ -334,12 +451,18 @@ def spherical_to_cartesian(lons, lats, depths):
     else:
         rr = EARTH_RADIUS - numpy.array(depths)
     cos_theta_r = rr * numpy.cos(theta)
-    xx = cos_theta_r * numpy.cos(phi)
-    yy = cos_theta_r * numpy.sin(phi)
-    zz = rr * numpy.sin(theta)
-    vectors = numpy.array([xx.transpose(), yy.transpose(), zz.transpose()]) \
-                   .transpose()
-    return vectors
+    try:
+        shape = lons.shape
+    except AttributeError:  # a list/tuple was passed
+        try:
+            shape = (len(lons),)
+        except TypeError:  # a scalar was passed
+            shape = ()
+    arr = numpy.zeros(shape + (3,))
+    arr[..., 0] = cos_theta_r * numpy.cos(phi)
+    arr[..., 1] = cos_theta_r * numpy.sin(phi)
+    arr[..., 2] = rr * numpy.sin(theta)
+    return arr
 
 
 def cartesian_to_spherical(vectors):
@@ -349,21 +472,18 @@ def cartesian_to_spherical(vectors):
     This function does an opposite to :func:`spherical_to_cartesian`.
 
     :param vectors:
-        Array of 3d vectors in Cartesian space.
+        Array of 3d vectors in Cartesian space of shape (..., 3)
     :returns:
         Tuple of three arrays of the same shape as ``vectors`` representing
         longitude (decimal degrees), latitude (decimal degrees) and depth (km)
         in specified order.
     """
     rr = numpy.sqrt(numpy.sum(vectors * vectors, axis=-1))
-    xx, yy, zz = vectors.transpose()
-    xx = xx.transpose()
-    yy = yy.transpose()
-    zz = zz.transpose()
+    xx, yy, zz = vectors.T
     lats = numpy.degrees(numpy.arcsin((zz / rr).clip(-1., 1.)))
     lons = numpy.degrees(numpy.arctan2(yy, xx))
     depths = EARTH_RADIUS - rr
-    return lons, lats, depths
+    return lons.T, lats.T, depths
 
 
 def triangle_area(e1, e2, e3):
@@ -434,6 +554,20 @@ def point_to_polygon_distance(polygon, pxx, pyy):
     return result.reshape(pxx.shape)
 
 
+def fix_lon(lon):
+    """
+    :returns: a valid longitude in the range -180 <= lon < 180
+
+    >>> fix_lon(11)
+    11
+    >>> fix_lon(181)
+    -179
+    >>> fix_lon(-182)
+    178
+    """
+    return (lon + 180) % 360 - 180
+
+
 def cross_idl(lon1, lon2):
     """
     Return True if two longitude values define line crossing international date
@@ -461,6 +595,49 @@ def cross_idl(lon1, lon2):
     return lon1 * lon2 < 0 and abs(lon1 - lon2) > 180
 
 
+def normalize_lons(l1, l2):
+    """
+    An international date line safe way of returning a range of longitudes.
+
+    >>> normalize_lons(20, 30)  # no IDL within the range
+    [(20, 30)]
+    >>> normalize_lons(-17, +17)  # no IDL within the range
+    [(-17, 17)]
+    >>> normalize_lons(-178, +179)
+    [(-180, -178), (179, 180)]
+    >>> normalize_lons(178, -179)
+    [(-180, -179), (178, 180)]
+    >>> normalize_lons(179, -179)
+    [(-180, -179), (179, 180)]
+    >>> normalize_lons(177, -176)
+    [(-180, -176), (177, 180)]
+    """
+    if l1 > l2:  # exchange lons
+        l1, l2 = l2, l1
+    delta = l2 - l1
+    if l1 < 0 and l2 > 0 and delta > 180:
+        return [(-180, l1), (l2, 180)]
+    elif l1 > 0 and l2 > 180 and delta < 180:
+        return [(l1, 180), (-180, l2 - 360)]
+    elif l1 < -180 and l2 < 0 and delta < 180:
+        return [(l1 + 360, 180), (l2, -180)]
+    return [(l1, l2)]
+
+
+def within(bbox, lonlat_index):
+    """
+    :param bbox: a bounding box in lon, lat
+    :param lonlat_index: an rtree index in lon, lat
+    :returns: array of indices within the bounding box
+    """
+    lon1, lat1, lon2, lat2 = bbox
+    set_ = set()
+    for l1, l2 in normalize_lons(lon1, lon2):
+        box = (l1, lat1, l2, lat2)
+        set_ |= set(lonlat_index.intersection(box))
+    return numpy.array(sorted(set_), numpy.uint32)
+
+
 def plane_fit(points):
     """
     This fits an n-dimensional plane to a set of points. See
@@ -479,4 +656,3 @@ def plane_fit(points):
     x = points - ctr[:, None]
     M = numpy.dot(x, x.T)
     return ctr, numpy.linalg.svd(M)[0][:, -1]
-

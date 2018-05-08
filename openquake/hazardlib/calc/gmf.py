@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2012-2017 GEM Foundation
+# Copyright (C) 2012-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -100,7 +100,7 @@ class GmfComputer(object):
             self.ctx = cmaker.make_contexts(sitecol, rupture)
         self.sids = self.ctx[0].sids
         if correlation_model:  # store the filtered sitecol
-            self.sites = sitecol.filtered(self.sids, sitecol.array)
+            self.sites = sitecol.filtered(self.sids)
 
     def compute(self, gsim, num_events, seed=None):
         """

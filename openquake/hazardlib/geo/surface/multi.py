@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2013-2017 GEM Foundation
+# Copyright (C) 2013-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -368,7 +368,7 @@ class MultiSurface(BaseSurface):
         west, east, north, south = utils.get_spherical_bounding_box(
             edge_sets[:, 0],
             edge_sets[:, 1])
-        self.proj = utils.get_orthographic_projection(west, east, north, south)
+        self.proj = utils.OrthographicProjection(west, east, north, south)
 
         for edges in self.edge_set:
             # Project edges into cartesian space
