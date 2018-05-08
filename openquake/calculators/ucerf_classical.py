@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2015-2017 GEM Foundation
+# Copyright (C) 2015-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -147,7 +147,6 @@ class UcerfPSHACalculator(PSHACalculator):
                              for sm in self.csm.source_models
                              for grp in sm.src_groups}
         self.rup_data = {}
-        self.split_time = {src.source_id: 0 for src in self.csm.get_sources()}
 
     def execute(self):
         """
@@ -157,7 +156,8 @@ class UcerfPSHACalculator(PSHACalculator):
         """
         monitor = self.monitor(self.core_task.__name__)
         monitor.oqparam = oq = self.oqparam
-        self.src_filter = SourceFilter(self.sitecol, oq.maximum_distance)
+        self.src_filter = SourceFilter(self.sitecol, oq.maximum_distance,
+                                       prefilter='no')
         self.nsites = []
         acc = AccumDict({
             grp_id: ProbabilityMap(len(oq.imtls.array), len(gsims))

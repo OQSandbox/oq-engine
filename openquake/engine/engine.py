@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2010-2017 GEM Foundation
+# Copyright (C) 2010-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -31,8 +31,9 @@ try:
 except ImportError:
     def setproctitle(title):
         "Do nothing"
+from urllib.request import urlopen, Request
 from openquake.baselib.performance import Monitor
-from openquake.baselib.python3compat import urlopen, Request, decode
+from openquake.baselib.python3compat import decode
 from openquake.baselib import (
     parallel, general, config, datastore, __version__, zeromq as z)
 from openquake.commonlib.oqvalidation import OqParam
@@ -43,6 +44,8 @@ from openquake.commonlib import logs
 OQ_API = 'https://api.openquake.org'
 TERMINATE = config.distribution.terminate_workers_on_revoke
 OQ_DISTRIBUTE = parallel.oq_distribute()
+
+_PPID = os.getppid()  # the controlling terminal PID
 
 if OQ_DISTRIBUTE == 'zmq':
 
@@ -156,11 +159,22 @@ def raiseMasterKilled(signum, _stack):
     :param int signum: the number of the received signal
     :param _stack: the current frame object, ignored
     """
-    parallel.Starmap.shutdown()
+    msg = 'Received a signal %d' % signum
+
     if signum in (signal.SIGTERM, signal.SIGINT):
         msg = 'The openquake master process was killed manually'
-    else:
-        msg = 'Received a signal %d' % signum
+
+    # kill the calculation only if os.getppid() != _PPID, i.e. the controlling
+    # terminal died; in the workers, do nothing
+    # NB: there is no SIGHUP on Windows
+    if hasattr(signal, 'SIGHUP'):
+        if signum == signal.SIGHUP:
+            if os.getppid() == _PPID:
+                return
+            else:
+                msg = 'The openquake master lost its controlling terminal'
+
+    parallel.Starmap.shutdown()
     raise MasterKilled(msg)
 
 
@@ -171,6 +185,8 @@ def raiseMasterKilled(signum, _stack):
 try:
     signal.signal(signal.SIGTERM, raiseMasterKilled)
     signal.signal(signal.SIGINT, raiseMasterKilled)
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, raiseMasterKilled)
 except ValueError:
     pass
 
@@ -239,12 +255,12 @@ def run_calc(job_id, oqparam, log_level, log_file, exports,
             logs.LOG.info('Calculation %d finished correctly in %d seconds',
                           job_id, duration)
             logs.dbcmd('finish', job_id, 'complete')
-        except:
+        except BaseException:
             tb = traceback.format_exc()
             try:
                 logs.LOG.critical(tb)
                 logs.dbcmd('finish', job_id, 'failed')
-            except:  # an OperationalError may always happen
+            except BaseException:  # an OperationalError may always happen
                 sys.stderr.write(tb)
             raise
         finally:
@@ -254,7 +270,7 @@ def run_calc(job_id, oqparam, log_level, log_file, exports,
             try:
                 if OQ_DISTRIBUTE.startswith('celery'):
                     celery_cleanup(TERMINATE, parallel.Starmap.task_ids)
-            except:
+            except BaseException:
                 # log the finalization error only if there is no real error
                 if tb == 'None\n':
                     logs.LOG.error('finalizing', exc_info=True)
@@ -291,8 +307,9 @@ def check_obsolete_version(calculation_mode='WebUI'):
         # avoid flooding our API server with requests from CI systems
         return
 
-    headers = {'User-Agent': 'OpenQuake Engine %s;%s;%s' %
-               (__version__, calculation_mode, platform.platform())}
+    headers = {'User-Agent': 'OpenQuake Engine %s;%s;%s;%s' %
+               (__version__, calculation_mode, platform.platform(),
+                config.distribution.oq_distribute)}
     try:
         req = Request(OQ_API + '/engine/latest', headers=headers)
         # NB: a timeout < 1 does not work

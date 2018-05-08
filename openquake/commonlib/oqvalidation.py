@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2014-2017 GEM Foundation
+# Copyright (C) 2014-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -33,6 +33,7 @@ from openquake.risklib.riskmodels import get_risk_files
 GROUND_MOTION_CORRELATION_MODELS = ['JB2009']
 TWO16 = 2 ** 16  # 65536
 F32 = numpy.float32
+F64 = numpy.float64
 
 
 class OqParam(valid.ParamSet):
@@ -56,6 +57,8 @@ class OqParam(valid.ParamSet):
         valid.positiveint, multiprocessing.cpu_count() * 3)  # by M. Simionato
     conditional_loss_poes = valid.Param(valid.probabilities, [])
     continuous_fragility_discretization = valid.Param(valid.positiveint, 20)
+    cross_correlation = valid.Param(
+        valid.Choice('cross', 'no correlation', 'full correlation'), 'cross')
     description = valid.Param(valid.utf8_not_empty)
     disagg_by_src = valid.Param(valid.boolean, False)
     disagg_outputs = valid.Param(valid.disagg_outputs, None)
@@ -64,6 +67,7 @@ class OqParam(valid.ParamSet):
     export_dir = valid.Param(valid.utf8, '.')
     export_multi_curves = valid.Param(valid.boolean, False)
     exports = valid.Param(valid.export_formats, ())
+    prefilter_sources = valid.Param(valid.Choice('rtree', 'numpy', 'no'), 'rtree')
     ground_motion_correlation_model = valid.Param(
         valid.NoneOr(valid.Choice(*GROUND_MOTION_CORRELATION_MODELS)), None)
     ground_motion_correlation_params = valid.Param(valid.dictionary)
@@ -111,8 +115,7 @@ class OqParam(valid.ParamSet):
     reference_vs30_value = valid.Param(
         valid.positivefloat, numpy.nan)
     reference_backarc = valid.Param(valid.boolean, False)
-    region = valid.Param(valid.coordinates, None)
-    region_constraint = valid.Param(valid.wkt_polygon, None)
+    region = valid.Param(valid.wkt_polygon, None)
     region_grid_spacing = valid.Param(valid.positivefloat, None)
     optimize_same_id_sources = valid.Param(valid.boolean, False)
     risk_imtls = valid.Param(valid.intensity_measure_types_and_levels, {})
@@ -126,6 +129,8 @@ class OqParam(valid.ParamSet):
     ses_per_logic_tree_path = valid.Param(valid.positiveint, 1)
     ses_seed = valid.Param(valid.positiveint, 42)
     max_site_model_distance = valid.Param(valid.positivefloat, 5)  # by Graeme
+    shakemap_id = valid.Param(valid.nice_string, None)
+    site_effects = valid.Param(valid.boolean, True)  # shakemap amplification
     sites = valid.Param(valid.NoneOr(valid.coordinates), None)
     sites_disagg = valid.Param(valid.NoneOr(valid.coordinates), [])
     sites_per_tile = valid.Param(valid.positiveint, 30000)  # by M. Simionato
@@ -159,6 +164,13 @@ class OqParam(valid.ParamSet):
         job_ini = self.inputs['job_ini']
         if 'calculation_mode' not in names_vals:
             raise InvalidFile('Missing calculation_mode in %s' % job_ini)
+        if 'region_constraint' in names_vals:
+            if 'region' in names_vals:
+                raise InvalidFile('You cannot have both region and '
+                                  'region_constraint in %s' % job_ini)
+            logging.warn('region_constraint is obsolete, use region instead')
+            self.region = valid.wkt_polygon(
+                names_vals.pop('region_constraint'))
         self.risk_investigation_time = (
             self.risk_investigation_time or self.investigation_time)
         if ('intensity_measure_types_and_levels' in names_vals and
@@ -332,7 +344,13 @@ class OqParam(valid.ParamSet):
         Return the cost types of the computation (including `occupants`
         if it is there) in order.
         """
-        return sorted(self.risk_files)
+        costtypes = sorted(self.risk_files)
+        if not costtypes and self.hazard_calculation_id:
+            with datastore.read(self.hazard_calculation_id) as ds:
+                parent = ds['oqparam']
+            self._file_type, self._risk_files = get_risk_files(parent.inputs)
+            costtypes = sorted(self.risk_files)
+        return costtypes
 
     def set_risk_imtls(self, risk_models):
         """
@@ -462,6 +480,12 @@ class OqParam(valid.ParamSet):
                           'damage' in self.calculation_mode or
                           'bcr' in self.calculation_mode) else 'hazard'
 
+    def is_valid_shakemap(self):
+        """
+        hazard_calculation_id must be set if shakemap_id is set
+        """
+        return self.hazard_calculation_id if self.shakemap_id else True
+
     def is_valid_truncation_level_disaggregation(self):
         """
         Truncation level must be set for disaggregation calculations
@@ -471,18 +495,11 @@ class OqParam(valid.ParamSet):
         else:
             return True
 
-    def is_valid_region(self):
-        """
-        If there is a region a region_grid_spacing must be given
-        """
-        return self.region_grid_spacing if self.region else True
-
     def is_valid_geometry(self):
         """
         It is possible to infer the geometry only if exactly
         one of sites, sites_csv, hazard_curves_csv, gmfs_csv,
-        region and exposure_file is set. You did set more than
-        one, or nothing.
+        region is set. You did set more than one, or nothing.
         """
         has_sites = (self.sites is not None or 'sites' in self.inputs
                      or 'site_model' in self.inputs)
@@ -498,12 +515,11 @@ class OqParam(valid.ParamSet):
             sites_csv=self.inputs.get('sites', 0),
             hazard_curves_csv=self.inputs.get('hazard_curves', 0),
             gmfs_csv=self.inputs.get('gmfs', 0),
-            region=bool(self.region),
-            exposure=self.inputs.get('exposure', 0))
+            region=bool(self.region and self.region_grid_spacing))
         # NB: below we check that all the flags
         # are mutually exclusive
         return sum(bool(v) for v in flags.values()) == 1 or self.inputs.get(
-            'site_model')
+            'exposure') or self.inputs.get('site_model')
 
     def is_valid_poes(self):
         """
@@ -618,10 +634,18 @@ class OqParam(valid.ParamSet):
         Invalid calculation_mode="{calculation_mode}" or missing
         fragility_file/vulnerability_file in the .ini file.
         """
+        if self.hazard_calculation_id:
+            parent_datasets = set(datastore.read(self.hazard_calculation_id))
+        else:
+            parent_datasets = set()
         if 'damage' in self.calculation_mode:
-            return any(key.endswith('_fragility') for key in self.inputs)
+            return any(
+                key.endswith('_fragility') for key in self.inputs
+            ) or 'composite_risk_model' in parent_datasets
         elif 'risk' in self.calculation_mode:
-            return any(key.endswith('_vulnerability') for key in self.inputs)
+            return any(
+                key.endswith('_vulnerability') for key in self.inputs
+            ) or 'composite_risk_model' in parent_datasets
         return True
 
     def is_valid_complex_fault_mesh_spacing(self):
@@ -647,7 +671,7 @@ class OqParam(valid.ParamSet):
 
     def check_source_model(self):
         if ('hazard_curves' in self.inputs or 'gmfs' in self.inputs or
-                'rupture_model' in self.inputs):
+                self.calculation_mode.startswith('scenario')):
             return
         if 'source' not in self.inputs and not self.hazard_calculation_id:
             raise ValueError('Missing source_model_logic_tree in %s '

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2012-2017 GEM Foundation
+# Copyright (C) 2012-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -24,11 +24,11 @@ from __future__ import division
 import numpy
 import shapely
 
-from openquake.baselib.python3compat import range, round
+from openquake.baselib.python3compat import round
 from openquake.baselib.node import Node
 from openquake.hazardlib.geo.line import Line
 from openquake.hazardlib.geo.point import Point
-from openquake.hazardlib.geo.surface.base import BaseQuadrilateralSurface
+from openquake.hazardlib.geo.surface.base import BaseSurface
 from openquake.hazardlib.geo.surface.planar import PlanarSurface
 from openquake.hazardlib.geo.mesh import Mesh, RectangularMesh
 from openquake.hazardlib.geo.utils import spherical_to_cartesian
@@ -63,7 +63,7 @@ def complex_fault_node(edges):
     return node
 
 
-class ComplexFaultSurface(BaseQuadrilateralSurface):
+class ComplexFaultSurface(BaseSurface):
     """
     Represent a complex fault surface as 3D mesh of points (not necessarily
     uniformly spaced across the surface area).
@@ -76,7 +76,7 @@ class ComplexFaultSurface(BaseQuadrilateralSurface):
     :meth:`from_fault_data`.
     """
     def __init__(self, mesh):
-        super(ComplexFaultSurface, self).__init__()
+        super().__init__()
         self.mesh = mesh
         assert 1 not in self.mesh.shape
         self.strike = self.dip = None
@@ -87,19 +87,13 @@ class ComplexFaultSurface(BaseQuadrilateralSurface):
         # restrict every complex source to have a projected enclosing
         # polygon that is not a multipolygon.
         if isinstance(
-                self.get_mesh()._get_proj_enclosing_polygon()[1],
+                self.mesh._get_proj_enclosing_polygon()[1],
                 shapely.geometry.multipolygon.MultiPolygon):
             raise ValueError("Invalid surface. "
                              "The projected enclosing polygon "
                              "must be a simple polygon. "
                              "Check the geometry definition of the "
                              "fault source")
-
-    def _create_mesh(self):
-        """
-        Return a mesh provided to object's constructor.
-        """
-        return self.mesh
 
     def get_dip(self):
         """
@@ -114,7 +108,7 @@ class ComplexFaultSurface(BaseQuadrilateralSurface):
         """
         # uses the same approach as in simple fault surface
         if self.dip is None:
-            mesh = self.get_mesh()
+            mesh = self.mesh
             self.dip, self.strike = mesh.get_mean_inclination_and_azimuth()
         return self.dip
 
@@ -222,7 +216,6 @@ class ComplexFaultSurface(BaseQuadrilateralSurface):
         ul = edges[0].points[0]
         strike = ul.azimuth(edges[0].points[-1])
         dist = 10.
-        mesh_spacing = 2.
 
         ur = ul.point_at(dist, 0, strike)
         bl = Point(ul.longitude, ul.latitude, ul.depth + dist)
@@ -230,9 +223,7 @@ class ComplexFaultSurface(BaseQuadrilateralSurface):
 
         # project surface boundary to reference plane and check for
         # validity.
-        ref_plane = PlanarSurface.from_corner_points(
-            mesh_spacing, ul, ur, br, bl
-        )
+        ref_plane = PlanarSurface.from_corner_points(ul, ur, br, bl)
         _, xx, yy = ref_plane._project(lons, lats, depths)
         coords = [(x, y) for x, y in zip(xx, yy)]
         p = shapely.geometry.Polygon(coords)

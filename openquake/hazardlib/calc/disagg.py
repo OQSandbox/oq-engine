@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2012-2017 GEM Foundation
+# Copyright (C) 2012-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -29,7 +29,7 @@ import collections
 import numpy
 import scipy.stats
 
-from openquake.baselib.python3compat import raise_, range
+from openquake.baselib.python3compat import raise_
 from openquake.baselib.performance import Monitor
 from openquake.baselib.hdf5 import ArrayWrapper
 from openquake.baselib.general import AccumDict, pack, groupby
@@ -86,8 +86,10 @@ def collect_bin_data(sources, sitecol, cmaker, iml4,
     truncnorm = scipy.stats.truncnorm(-truncation_level, truncation_level)
     epsilons = numpy.linspace(truncnorm.a, truncnorm.b, n_epsilons + 1)
     acc = AccumDict(accum=[])
+    mon = monitor('iter_ruptures', measuremem=False)
     for source in sources:
-        ruptures = source.iter_ruptures()
+        with mon:
+            ruptures = list(source.iter_ruptures())
         try:
             acc += cmaker.disaggregate(
                 sitecol, ruptures, iml4, truncnorm, epsilons, monitor)

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2012-2017 GEM Foundation
+# Copyright (C) 2012-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -21,16 +21,8 @@ Module :mod:`openquake.hazardlib.geo.geodetic` contains functions for geodetic
 transformations, optimized for massive calculations.
 """
 from __future__ import division
-
-import operator
-
 import numpy
-try:
-    import rtree
-except ImportError:
-    rtree = None
-
-from openquake.baselib.python3compat import range, round
+from openquake.baselib.python3compat import round
 
 #: Earth radius in km.
 EARTH_RADIUS = 6371.0
@@ -224,6 +216,26 @@ def pure_distances(mlons, mlats, slons, slats):
             result[:, j] = numpy.arcsin(
                 numpy.sqrt(a * a + cos_mlats * cos_slats[j] * b * b))
     return result
+
+
+def distance_matrix(lons, lats, diameter=2*EARTH_RADIUS):
+    """
+    :param lons: array of m longitudes
+    :param lats: array of m latitudes
+    :returns: matrix of (m, m) distances
+    """
+    m = len(lons)
+    assert m == len(lats), (m, len(lats))
+    lons = numpy.radians(lons)
+    lats = numpy.radians(lats)
+    cos_lats = numpy.cos(lats)
+    result = numpy.zeros((m, m))
+    for i in range(len(lons)):
+        a = numpy.sin((lats[i] - lats) / 2.0)
+        b = numpy.sin((lons[i] - lons) / 2.0)
+        result[i, :] = numpy.arcsin(
+            numpy.sqrt(a * a + cos_lats[i] * cos_lats * b * b)) * diameter
+    return numpy.matrix(result, copy=False)
 
 
 def min_idx_dst(mlons, mlats, mdepths, slons, slats, sdepths=0,

@@ -1,6 +1,6 @@
 from __future__ import division
 # The Hazard Library
-# Copyright (C) 2012-2017 GEM Foundation
+# Copyright (C) 2012-2018 GEM Foundation
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as
@@ -19,7 +19,6 @@ from nose.plugins.attrib import attr
 
 import numpy
 import os
-from decimal import Decimal
 from openquake.hazardlib import const
 from openquake.hazardlib.geo import Point, Line
 from openquake.hazardlib.geo.surface.planar import PlanarSurface
@@ -37,7 +36,7 @@ def make_rupture(rupture_class, **kwargs):
         'rake': 123.45,
         'tectonic_region_type': const.TRT.STABLE_CONTINENTAL,
         'hypocenter': Point(5, 6, 7),
-        'surface': PlanarSurface(10, 11, 12, Point(0, 0, 1), Point(1, 0, 1),
+        'surface': PlanarSurface(11, 12, Point(0, 0, 1), Point(1, 0, 1),
                                  Point(1, 0, 2), Point(0, 0, 2)),
         'source_typology': object()
     }
@@ -213,20 +212,18 @@ class NonParametricProbabilisticRuptureTestCase(unittest.TestCase):
         self.assertEqual(str(ae.exception), msg)
 
     def test_creation(self):
-        pmf = PMF([(Decimal('0.8'), 0), (Decimal('0.2'), 1)])
+        pmf = PMF([(0.8, 0), (0.2, 1)])
         make_rupture(NonParametricProbabilisticRupture, pmf=pmf)
 
     def test_minimum_number_of_ruptures_is_not_zero(self):
-        pmf = PMF([(Decimal('0.8'), 1), (Decimal('0.2'), 2)])
+        pmf = PMF([(0.8, 1), (0.2, 2)])
         self.assert_failed_creation(
             NonParametricProbabilisticRupture,
             ValueError, 'minimum number of ruptures must be zero', pmf=pmf
         )
 
     def test_numbers_of_ruptures_not_in_increasing_order(self):
-        pmf = PMF(
-            [(Decimal('0.8'), 0), (Decimal('0.1'), 2), (Decimal('0.1'), 1)]
-        )
+        pmf = PMF([(0.8, 0), (0.1, 2), (0.1, 1)])
         self.assert_failed_creation(
             NonParametricProbabilisticRupture,
             ValueError,
@@ -234,7 +231,7 @@ class NonParametricProbabilisticRuptureTestCase(unittest.TestCase):
         )
 
     def test_numbers_of_ruptures_not_defined_with_unit_step(self):
-        pmf = PMF([(Decimal('0.8'), 0), (Decimal('0.2'), 2)])
+        pmf = PMF([(0.8, 0), (0.2, 2)])
         self.assert_failed_creation(
             NonParametricProbabilisticRupture,
             ValueError,
@@ -242,9 +239,7 @@ class NonParametricProbabilisticRuptureTestCase(unittest.TestCase):
         )
 
     def test_get_probability_no_exceedance(self):
-        pmf = PMF(
-            [(Decimal('0.7'), 0), (Decimal('0.2'), 1), (Decimal('0.1'), 2)]
-        )
+        pmf = PMF([(0.7, 0), (0.2, 1), (0.1, 2)])
         poes = numpy.array([[0.9, 0.8, 0.7], [0.6, 0.5, 0.4]])
         rup = make_rupture(NonParametricProbabilisticRupture, pmf=pmf)
         pne = rup.get_probability_no_exceedance(poes)
@@ -254,9 +249,7 @@ class NonParametricProbabilisticRuptureTestCase(unittest.TestCase):
         )
 
     def test_sample_number_of_occurrences(self):
-        pmf = PMF(
-            [(Decimal('0.7'), 0), (Decimal('0.2'), 1), (Decimal('0.1'), 2)]
-        )
+        pmf = PMF([(0.7, 0), (0.2, 1), (0.1, 2)])
         rup = make_rupture(NonParametricProbabilisticRupture, pmf=pmf)
         numpy.random.seed(123)
 

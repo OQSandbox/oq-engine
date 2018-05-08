@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2015-2017 GEM Foundation
+# Copyright (C) 2015-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -39,6 +39,7 @@ class ClassicalTilingTestCase(CalculatorTestCase):
 
     @attr('qa', 'hazard', 'classical')
     def test_case_2(self):
+        # this is case with two tiles of 7 sites each
         self.run_calc(case_2.__file__, 'job.ini', exports='csv,geojson')
         [fname] = export(('hmaps', 'csv'), self.calc.datastore)
         self.assertEqualFiles(

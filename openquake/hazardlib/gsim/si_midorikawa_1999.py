@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2013-2017 GEM Foundation
+# Copyright (C) 2013-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -88,7 +88,7 @@ def _get_min_distance_to_sub_trench(lons, lats):
     depth.
     The 10 km depth value is arbitrary given that distance calculation depend
     only on top edge depth. The method calls then
-    :meth:`openquake.hazardlib.geo.base.BaseQuadrilateralSurface.get_rx_distance`
+    :meth:`openquake.hazardlib.geo.base.BaseSurface.get_rx_distance`
     and return its absolute value.
     """
     trench = _construct_surface(SUB_TRENCH_LONS, SUB_TRENCH_LATS, 0., 10.)

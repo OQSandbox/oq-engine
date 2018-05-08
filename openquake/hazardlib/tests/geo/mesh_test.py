@@ -1,5 +1,5 @@
 # The Hazard Library
-# Copyright (C) 2012-2017 GEM Foundation
+# Copyright (C) 2012-2018 GEM Foundation
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as
@@ -60,7 +60,7 @@ class MeshCreationTestCase(_BaseMeshTestCase):
         self.assertEqual(len(mesh), 1)
 
     def test_wrong_arguments(self):
-        self.assertRaises(AssertionError, self._make_mesh, [1, 2], [2, 3])
+        self.assertRaises(AttributeError, self._make_mesh, [1, 2], [2, 3])
         self.assertRaises(AssertionError, self._make_mesh,
                           numpy.array([1, 2]), numpy.array([2, 3, 4]))
         self.assertRaises(AssertionError, self._make_mesh,
@@ -821,6 +821,22 @@ class RectangularMeshGetProjectionEnclosingPolygonTestCase(unittest.TestCase):
                               [8., 9.]])
         expected_coords = [(-0.1, -0.1), (-0.1, 0.1), (0.1, 0.1), (0.1, -0.1),
                            (-0.1, -0.1)]
+        polygon = self._test(lons, lats, depths, expected_coords)
+
+        coords2d = numpy.array(polygon.exterior.coords)
+        expected_coords2d = [(-11.12, -11.12), (-11.12, 11.12), (11.12, 11.12),
+                             (11.12, -11.12), (-11.12, -11.12)]
+        numpy.testing.assert_almost_equal(coords2d, expected_coords2d,
+                                          decimal=2)
+    def test_idl(self):
+        lons = numpy.array([[179.9, -179.9],
+                            [179.9, -179.9]])
+        lats = numpy.array([[-0.1, -0.1],
+                            [0.1, 0.1]])
+        depths = numpy.array([[2., 3.],
+                              [8., 9.]])
+        expected_coords = [(179.9, -0.1), (179.9, 0.1), (-179.9, 0.1), 
+                           (-179.9, -0.1), (179.9, -0.1)]
         polygon = self._test(lons, lats, depths, expected_coords)
 
         coords2d = numpy.array(polygon.exterior.coords)

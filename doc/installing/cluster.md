@@ -51,7 +51,7 @@ multi_user = true
 file = /var/lib/openquake/db.sqlite3
 log = /var/lib/openquake/dbserver.log
 host = w.x.y.z
-port = 1908
+port = 1907
 authkey = changeme
 ```
 
@@ -111,7 +111,7 @@ The *Celery* daemon is not started at boot by default on the workers node and th
 
 ### Monitoring Celery
 
-The `celery-status` script is provided under `/usr/share/openquake/engine/utils` to check the status of the worker nodes, the task distribution and the cluster occupation. An output like this is produced:
+`oq celery status` can be used to check the status of the worker nodes, the task distribution and the cluster occupation. An output like this is produced:
 
 ```
 ==========
@@ -181,10 +181,11 @@ Additionally, access to the RabbitMQ, and DbServer ports should be limited (agai
 The following ports must be open on the **master node**:
 
 * 5672 for RabbitMQ
-* 1908 for DbServer
+* 1907 for DbServer (or any other port allocated for the DbServer in the `openquake.cfg`)
+* 1912-1920 for ZeroMQ receivers
 * 8800 for the API/WebUI (optional)
 
-The **worker nodes** must be able to connect to the master on port 5672, and port 1908.
+The **worker nodes** must be able to connect to the master on port 5672, and port 1907.
 
 
 ## Storage requirements

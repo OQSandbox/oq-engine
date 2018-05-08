@@ -1,5 +1,5 @@
 # The Hazard Library
-# Copyright (C) 2016-2017 GEM Foundation
+# Copyright (C) 2016-2018 GEM Foundation
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as
@@ -54,11 +54,9 @@ def _create_rupture(distance, magnitude,
     rake = 0.0
     tectonic_region_type = tectonic_region_type
     hypocenter = Point(lonp, latp, 2.5)
-    surface = PlanarSurface.from_corner_points(0.01,
-                                               Point(lonp, -1, 0.),
-                                               Point(lonp, +1, 0.),
-                                               Point(lonp, +1, 5.),
-                                               Point(lonp, -1, 5.))
+    surface = PlanarSurface.from_corner_points(
+        Point(lonp, -1, 0.), Point(lonp, +1, 0.),
+        Point(lonp, +1, 5.), Point(lonp, -1, 5.))
     surface = SimpleFaultSurface.from_fault_data(
         fault_trace=Line([Point(lonp, -1), Point(lonp, 1)]),
         upper_seismogenic_depth=0.0,

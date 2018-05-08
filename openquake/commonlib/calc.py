@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright (C) 2014-2017 GEM Foundation
+# Copyright (C) 2014-2018 GEM Foundation
 #
 # OpenQuake is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Affero General Public License as published
@@ -43,8 +43,6 @@ F64 = numpy.float64
 
 EVENTS = -2
 NBYTES = -1
-event_dt = numpy.dtype([('eid', U64), ('grp_id', U16), ('ses', U32),
-                        ('sample', U32)])
 
 # ############## utilities for the classical calculator ############### #
 
@@ -271,7 +269,7 @@ def fix_minimum_intensity(min_iml, imts):
 
     >>> min_iml = {'PGA': 0.1, 'default': 0.05}
     >>> fix_minimum_intensity(min_iml, ['PGA', 'PGV'])
-    array([ 0.1 ,  0.05], dtype=float32)
+    array([0.1 , 0.05], dtype=float32)
     >>> sorted(min_iml.items())
     [('PGA', 0.1), ('PGV', 0.05)]
     """
