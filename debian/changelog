@@ -1,4 +1,16 @@
   [Michele Simionato]
+  * Made rtree optional again and disabled it in macOS
+  * Optimized the SiteCollection class and doubled the speed of distance
+    calculations in most continental scale calculations
+  * Fixed an ordering bug in event based risk from GMFs when using a
+    vulnerability function with PMF
+  * Replaced Rtree with KDtree except in the source filtering
+  * Parallelized the source prefiltering
+  * Removed the tiling feature from the classical calculator
+  * Undeprecated `hazardlib.calc.stochastic.stochastic_event_set` and
+    made its signature right
+  * Removed the source typology from the ruptures and reduced the rupture
+    hierarchy
   * Removed the mesh spacing from PlanarSurfaces
   * Optimized the instantiation of the rtree index
   * Replaced the old prefiltering mechanism with the new one

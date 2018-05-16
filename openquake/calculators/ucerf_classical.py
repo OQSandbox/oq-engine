@@ -141,7 +141,8 @@ class UcerfPSHACalculator(PSHACalculator):
         parse the logic tree and source model input
         """
         logging.warn('%s is still experimental', self.__class__.__name__)
-        self.sitecol = readinput.get_site_collection(self.oqparam)
+        sitecol = readinput.get_site_collection(self.oqparam)
+        self.datastore['sitecol'] = self.sitecol = sitecol
         self.csm = get_composite_source_model(self.oqparam)
         self.gsims_by_grp = {grp.id: self.csm.info.get_gsims(grp.id)
                              for sm in self.csm.source_models
@@ -156,8 +157,7 @@ class UcerfPSHACalculator(PSHACalculator):
         """
         monitor = self.monitor(self.core_task.__name__)
         monitor.oqparam = oq = self.oqparam
-        self.src_filter = SourceFilter(self.sitecol, oq.maximum_distance,
-                                       prefilter='no')
+        self.src_filter = SourceFilter(self.sitecol, oq.maximum_distance)
         self.nsites = []
         acc = AccumDict({
             grp_id: ProbabilityMap(len(oq.imtls.array), len(gsims))

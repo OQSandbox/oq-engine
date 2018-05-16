@@ -121,6 +121,7 @@ producing too small PoEs.'''
             cl.run()
             self.csm = cl.csm
             self.rlzs_assoc = cl.rlzs_assoc  # often reduced logic tree
+            self.sitecol = cl.sitecol
 
     def execute(self):
         """Performs the disaggregation"""
@@ -213,9 +214,8 @@ producing too small PoEs.'''
         """
         oq = self.oqparam
         tl = oq.truncation_level
-        src_filter = SourceFilter(self.sitecol, oq.maximum_distance,
-                                  prefilter='numpy')
-        csm = self.csm.filter(src_filter)  # fine filtering
+        src_filter = SourceFilter(self.sitecol, oq.maximum_distance)
+        csm = self.csm
         if not csm.get_sources():
             raise RuntimeError('All sources were filtered away!')
 
