@@ -28,9 +28,8 @@ import numpy
 from openquake.baselib.general import AccumDict
 from openquake.baselib.performance import Monitor
 from openquake.baselib.python3compat import raise_
-from openquake.hazardlib.calc.filters import FarAwayRupture
 from openquake.hazardlib.source.rupture import EBRupture
-from openquake.hazardlib.gsim.base import ContextMaker
+from openquake.hazardlib.contexts import ContextMaker, FarAwayRupture
 from openquake.hazardlib.calc import filters
 
 TWO32 = 2 ** 32  # 4,294,967,296
@@ -128,7 +127,8 @@ def sample_ruptures(group, src_filter, gsims, param, monitor=Monitor()):
     # Compute and save stochastic event sets
     num_ruptures = 0
     eids = numpy.zeros(0)
-    cmaker = ContextMaker(gsims, src_filter.integration_distance)
+    cmaker = ContextMaker(gsims, src_filter.integration_distance,
+                          param['filter_distance'])
     for src, s_sites in src_filter(group):
         t0 = time.time()
         num_ruptures += src.num_ruptures
