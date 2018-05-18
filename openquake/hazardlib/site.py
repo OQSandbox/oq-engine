@@ -203,6 +203,8 @@ class SiteCollection(object):
                 arr[name] = sitemodel[name]
         return self
 
+    xyz = Mesh.xyz
+
     def filtered(self, indices):
         """
         :param indices:
@@ -218,6 +220,16 @@ class SiteCollection(object):
         new.array = self.array[indices]
         new.complete = self.complete
         return new
+
+    def make_complete(self):
+        """
+        Turns the site collection into a complete one, if needed
+        """
+        if self is self.complete:  # do nothing
+            return
+        # reset the site indices from 0 to N-1 and set self.complete to self
+        self.array['sids'] = numpy.arange(len(self), dtype=numpy.uint32)
+        self.complete = self
 
     def __init__(self, sites):
         """
