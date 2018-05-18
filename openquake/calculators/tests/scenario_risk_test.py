@@ -22,7 +22,7 @@ from openquake.qa_tests_data.scenario_risk import (
     case_1, case_2, case_2d, case_1g, case_1h, case_3, case_4, case_5,
     case_6a, case_7, case_8, occupants, case_master, case_shakemap)
 
-from openquake.baselib.general import writetmp
+from openquake.baselib.general import gettemp
 from openquake.commonlib.logictree import InvalidLogicTree
 from openquake.calculators.tests import CalculatorTestCase
 from openquake.calculators.views import view
@@ -109,7 +109,7 @@ class ScenarioRiskTestCase(CalculatorTestCase):
         # this test is sensitive to the ordering of the epsilons
         # in openquake.riskinput.make_eps
         out = self.run_calc(case_4.__file__, 'job.ini', exports='csv')
-        fname = writetmp(view('totlosses', self.calc.datastore))
+        fname = gettemp(view('totlosses', self.calc.datastore))
         self.assertEqualFiles('expected/totlosses.txt', fname)
 
         [fname] = out['agglosses-rlzs', 'csv']
@@ -144,7 +144,7 @@ class ScenarioRiskTestCase(CalculatorTestCase):
 
         # testing the totlosses view
         dstore = self.calc.datastore
-        fname = writetmp(view('totlosses', dstore))
+        fname = gettemp(view('totlosses', dstore))
         self.assertEqualFiles('expected/totlosses.txt', fname)
 
         # testing the npz export runs
@@ -187,9 +187,9 @@ class ScenarioRiskTestCase(CalculatorTestCase):
         # check losses by taxonomy
         agglosses = extract(self.calc.datastore, 'agglosses/structural?'
                             'taxonomy=*').array  # shape (T, R) = (3, 2)
-        aac(agglosses, [[1981.4678955, 2363.5800781],
-                        [712.8535156, 924.7561646],
-                        [986.706604, 1344.0371094]])
+        aac(agglosses, [[1981.4679, 2363.5803],
+                        [712.8535, 924.75616],
+                        [986.7066, 1344.0371]])
 
         # extract agglosses with a * and a selection
         obj = extract(self.calc.datastore, 'agglosses/structural?'
@@ -226,6 +226,7 @@ class ScenarioRiskTestCase(CalculatorTestCase):
                       hazard_calculation_id=str(self.calc.datastore.calc_id))
         sitecol = self.calc.datastore['sitecol']
         self.assertEqual(len(sitecol), 8)
+        # FIXME: dict(extract(self.calc.datastore, 'gmf_data')) is broken
         agglosses = extract(self.calc.datastore, 'agglosses-rlzs')
         aac(agglosses['mean'], numpy.array([[314017.34]], numpy.float32),
             atol=.1)

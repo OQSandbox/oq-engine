@@ -76,9 +76,8 @@ class ComplexFaultSurface(BaseSurface):
     :meth:`from_fault_data`.
     """
     def __init__(self, mesh):
-        super().__init__()
         self.mesh = mesh
-        assert 1 not in self.mesh.shape
+        assert 1 not in self.mesh.shape, self.mesh.shape
         self.strike = self.dip = None
 
         # A common user error is to create a ComplexFaultSourceSurface
@@ -224,7 +223,8 @@ class ComplexFaultSurface(BaseSurface):
         # project surface boundary to reference plane and check for
         # validity.
         ref_plane = PlanarSurface.from_corner_points(ul, ur, br, bl)
-        _, xx, yy = ref_plane._project(lons, lats, depths)
+        _, xx, yy = ref_plane._project(
+            spherical_to_cartesian(lons, lats, depths))
         coords = [(x, y) for x, y in zip(xx, yy)]
         p = shapely.geometry.Polygon(coords)
         if not p.is_valid:

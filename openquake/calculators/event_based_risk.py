@@ -114,7 +114,6 @@ def event_based_risk(riskinput, riskmodel, param, monitor):
                 ratios = loss_ratios[a]  # shape (E, I)
                 aid = asset.ordinal
                 losses = ratios * asset.value(loss_type)
-
                 # average losses
                 if param['avg_losses']:
                     rat = ratios.sum(axis=0) * param['ses_ratio']
@@ -292,7 +291,7 @@ class EbrCalculator(base.RiskCalculator):
                 getter = getters.GmfGetter(
                     rlzs_by_gsim, rupts, sitecol, imtls, min_iml,
                     self.oqparam.maximum_distance, trunc_level, correl_model,
-                    samples)
+                    self.oqparam.filter_distance, samples)
                 ri = riskinput.RiskInput(getter, self.assets_by_site, eps)
                 allargs.append((ri, riskmodel, assetcol, monitor))
 

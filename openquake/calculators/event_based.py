@@ -27,7 +27,8 @@ from openquake.baselib import hdf5
 from openquake.baselib.python3compat import zip
 from openquake.baselib.general import (
     AccumDict, block_splitter, split_in_slices)
-from openquake.hazardlib.calc.filters import SourceFilter
+from openquake.hazardlib.calc.filters import (
+    BaseFilter, SourceFilter, RtreeFilter)
 from openquake.hazardlib.calc.stochastic import sample_ruptures
 from openquake.hazardlib.probability_map import ProbabilityMap
 from openquake.hazardlib.stats import compute_pmap_stats
@@ -158,18 +159,16 @@ class EventBasedRuptureCalculator(base.HazardCalculator):
         :yields: (sources, sites, gsims, monitor) tuples
         """
         oq = self.oqparam
-        src_filter = SourceFilter(self.sitecol.complete, oq.maximum_distance,
-                                  oq.prefilter_sources)
 
         def weight(src):
             return src.num_ruptures * src.RUPTURE_WEIGHT
-        csm = self.csm.filter(src_filter)
+        csm, src_filter = self.filter_csm()
         maxweight = csm.get_maxweight(weight, oq.concurrent_tasks or 1)
         logging.info('Using maxweight=%d', maxweight)
         param = dict(
             truncation_level=oq.truncation_level,
-            imtls=oq.imtls, seed=oq.ses_seed,
-            maximum_distance=oq.maximum_distance,
+            imtls=oq.imtls, filter_distance=oq.filter_distance,
+            seed=oq.ses_seed, maximum_distance=oq.maximum_distance,
             ses_per_logic_tree_path=oq.ses_per_logic_tree_path)
 
         num_tasks = 0
@@ -178,7 +177,7 @@ class EventBasedRuptureCalculator(base.HazardCalculator):
             for sg in sm.src_groups:
                 gsims = csm.info.gsim_lt.get_gsims(sg.trt)
                 csm.add_infos(sg.sources)
-                if sg.src_interdep == 'mutex':
+                if sg.src_interdep == 'mutex':  # do not split
                     sg.samples = sm.samples
                     yield sg, src_filter, gsims, param, monitor
                     num_tasks += 1
@@ -398,7 +397,7 @@ class EventBasedCalculator(base.HazardCalculator):
                         rlzs_by_gsim[grp_id], block, sitecol,
                         imts, min_iml, oq.maximum_distance,
                         oq.truncation_level, correl_model,
-                        samples_by_grp[grp_id])
+                        oq.filter_distance, samples_by_grp[grp_id])
                     yield [getter], oq, monitor
             return
         U = len(self.datastore['ruptures'])
@@ -415,7 +414,7 @@ class EventBasedCalculator(base.HazardCalculator):
                 getters.append(GmfGetter(
                     rlzs_by_gsim[grp_id], ruptures, sitecol,
                     imts, min_iml, oq.maximum_distance, oq.truncation_level,
-                    correl_model, samples_by_grp[grp_id]))
+                    correl_model, oq.filter_distance, samples_by_grp[grp_id]))
             yield getters, oq, monitor
 
     def execute(self):

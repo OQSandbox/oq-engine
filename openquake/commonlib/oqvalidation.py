@@ -67,7 +67,9 @@ class OqParam(valid.ParamSet):
     export_dir = valid.Param(valid.utf8, '.')
     export_multi_curves = valid.Param(valid.boolean, False)
     exports = valid.Param(valid.export_formats, ())
-    prefilter_sources = valid.Param(valid.Choice('rtree', 'numpy', 'no'), 'rtree')
+    prefilter_sources = valid.Param(valid.Choice('rtree', 'numpy', 'no'),
+                                    'rtree')
+    filter_distance = valid.Param(valid.Choice('rjb', 'rrup'), 'rjb')
     ground_motion_correlation_model = valid.Param(
         valid.NoneOr(valid.Choice(*GROUND_MOTION_CORRELATION_MODELS)), None)
     ground_motion_correlation_params = valid.Param(valid.dictionary)
@@ -133,7 +135,6 @@ class OqParam(valid.ParamSet):
     site_effects = valid.Param(valid.boolean, True)  # shakemap amplification
     sites = valid.Param(valid.NoneOr(valid.coordinates), None)
     sites_disagg = valid.Param(valid.NoneOr(valid.coordinates), [])
-    sites_per_tile = valid.Param(valid.positiveint, 30000)  # by M. Simionato
     sites_slice = valid.Param(valid.simple_slice, (None, None))
     sm_lt_path = valid.Param(valid.logic_tree_path, None)
     specific_assets = valid.Param(valid.namelist, [])
