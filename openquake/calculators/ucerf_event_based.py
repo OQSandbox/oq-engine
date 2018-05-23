@@ -39,7 +39,7 @@ from openquake.calculators.event_based_risk import (
 from openquake.hazardlib.geo.surface.multi import MultiSurface
 from openquake.hazardlib.pmf import PMF
 from openquake.hazardlib.geo.point import Point
-from openquake.hazardlib.geo.geodetic import min_idx_dst, min_geodetic_distance
+from openquake.hazardlib.geo.geodetic import min_geodetic_distance
 from openquake.hazardlib.geo.surface.planar import PlanarSurface
 from openquake.hazardlib.geo.nodalplane import NodalPlane
 from openquake.hazardlib.contexts import ContextMaker, FarAwayRupture
@@ -498,8 +498,7 @@ class UCERFSource(object):
         """
         centroids = self.get_centroids(ridx)
         distance = min_geodetic_distance(
-            centroids[:, 0], centroids[:, 1],
-            src_filter.sitecol.lons, src_filter.sitecol.lats)
+            (centroids[:, 0], centroids[:, 1]), src_filter.sitecol.xyz)
         idist = src_filter.integration_distance(DEFAULT_TRT, mag)
         return src_filter.sitecol.filter(distance <= idist)
 
@@ -511,13 +510,11 @@ class UCERFSource(object):
         """
         branch_key = self.idx_set["grid_key"]
         idist = src_filter.integration_distance(DEFAULT_TRT)
-        lons, lats = src_filter.sitecol.lons, src_filter.sitecol.lats
         with h5py.File(self.source_file, 'r') as hdf5:
             bg_locations = hdf5["Grid/Locations"].value
-            n_locations = bg_locations.shape[0]
-            distances = min_idx_dst(lons, lats, numpy.zeros_like(lons),
-                                    bg_locations[:, 0], bg_locations[:, 1],
-                                    numpy.zeros(n_locations))[1]
+            distances = min_geodetic_distance(
+                src_filter.sitecol.xyz,
+                (bg_locations[:, 0], bg_locations[:, 1]))
             # Add buffer equal to half of length of median area from Mmax
             mmax_areas = self.msr.get_median_area(
                 hdf5["/".join(["Grid", branch_key, "MMax"])].value, 0.0)

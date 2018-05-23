@@ -22,7 +22,7 @@ import numpy
 
 from openquake.baselib.general import AccumDict
 from openquake.baselib.performance import Monitor
-from openquake.baselib.python3compat import with_metaclass, raise_
+from openquake.baselib.python3compat import raise_
 from openquake.hazardlib import imt as imt_module
 from openquake.hazardlib.probability_map import ProbabilityMap
 
@@ -68,15 +68,23 @@ class ContextMaker(object):
     """
     REQUIRES = ['DISTANCES', 'SITES_PARAMETERS', 'RUPTURE_PARAMETERS']
 
-    def __init__(self, gsims, maximum_distance=None, filter_distance='rjb'):
+    def __init__(self, gsims, maximum_distance=None, filter_distance=None,
+                 monitor=Monitor()):
         self.gsims = gsims
         self.maximum_distance = maximum_distance or {}
-        self.filter_distance = filter_distance
         for req in self.REQUIRES:
             reqset = set()
             for gsim in gsims:
                 reqset.update(getattr(gsim, 'REQUIRES_' + req))
             setattr(self, 'REQUIRES_' + req, reqset)
+        if filter_distance is None:
+            if 'rrup' in self.REQUIRES_DISTANCES:
+                filter_distance = 'rrup'
+            elif 'rjb' in self.REQUIRES_DISTANCES:
+                filter_distance = 'rjb'
+            else:
+                filter_distance = 'rrup'
+        self.filter_distance = filter_distance
         self.REQUIRES_DISTANCES.add(self.filter_distance)
         if hasattr(gsims, 'items'):  # gsims is actually a dict rlzs_by_gsim
             # since the ContextMaker must be used on ruptures with all the
@@ -85,6 +93,9 @@ class ContextMaker(object):
             for gsim, rlzis in gsims.items():
                 for rlzi in rlzis:
                     self.gsim_by_rlzi[rlzi] = gsim
+        self.ir_mon = monitor('iter_ruptures', measuremem=False)
+        self.ctx_mon = monitor('make_contexts', measuremem=False)
+        self.poe_mon = monitor('get_poes', measuremem=False)
 
     def filter(self, sites, rupture):
         """
@@ -108,6 +119,34 @@ class ContextMaker(object):
                 raise FarAwayRupture
         return sites, DistancesContext([(self.filter_distance, distances)])
 
+    def add_rup_params(self, rupture):
+        """
+        Add .REQUIRES_RUPTURE_PARAMETERS to the rupture
+        """
+        for param in self.REQUIRES_RUPTURE_PARAMETERS:
+            if param == 'mag':
+                value = rupture.mag
+            elif param == 'strike':
+                value = rupture.surface.get_strike()
+            elif param == 'dip':
+                value = rupture.surface.get_dip()
+            elif param == 'rake':
+                value = rupture.rake
+            elif param == 'ztor':
+                value = rupture.surface.get_top_edge_depth()
+            elif param == 'hypo_lon':
+                value = rupture.hypocenter.longitude
+            elif param == 'hypo_lat':
+                value = rupture.hypocenter.latitude
+            elif param == 'hypo_depth':
+                value = rupture.hypocenter.depth
+            elif param == 'width':
+                value = rupture.surface.get_width()
+            else:
+                raise ValueError('%s requires unknown rupture parameter %r' %
+                                 (type(self).__name__, param))
+            setattr(rupture, param, value)
+
     def make_contexts(self, sites, rupture):
         """
         Filter the site collection with respect to the rupture and
@@ -130,25 +169,11 @@ class ContextMaker(object):
         sites, dctx = self.filter(sites, rupture)
         for param in self.REQUIRES_DISTANCES - set([self.filter_distance]):
             setattr(dctx, param, get_distances(rupture, sites, param))
-        # NB: returning a SitesContext makes .get_poes faster
-        return SitesContext(sites), dctx
-
-    def filter_ruptures(self, src, sites):
-        """
-        :param src: a source object, already filtered and split
-        :param sites: a filtered SiteCollection
-        :return: a list of filtered ruptures with context attributes
-        """
-        ruptures = []
-        weight = 1. / (src.num_ruptures or src.count_ruptures())
-        for rup in src.iter_ruptures():
-            rup.weight = weight
-            try:
-                rup.sctx, rup.dctx = self.make_contexts(sites, rup)
-            except FarAwayRupture:
-                continue
-            ruptures.append(rup)
-        return ruptures
+        self.add_rup_params(rupture)
+        # NB: returning a SitesContext make sures that the GSIM cannot
+        # access site parameters different from the ones declared
+        sctx = SitesContext(sites, self.REQUIRES_SITES_PARAMETERS)
+        return sctx, dctx
 
     def make_pmap(self, ruptures, imtls, trunclevel, rup_indep):
         """
@@ -175,24 +200,32 @@ class ContextMaker(object):
         tildemap.eff_ruptures = len(ruptures)
         return tildemap
 
-    def poe_map(self, src, sites, imtls, trunclevel, ctx_mon, poe_mon,
-                rup_indep=True):
+    def poe_map(self, src, sites, imtls, trunclevel, rup_indep=True):
         """
         :param src: a source object
         :param sites: a filtered SiteCollection
         :param imtls: intensity measure and levels
         :param trunclevel: truncation level
-        :param ctx_mon: a Monitor instance for make_context
-        :param poe_mon: a Monitor instance for get_poes
         :param rup_indep: True if the ruptures are independent
         :returns: a ProbabilityMap instance
         """
-        with ctx_mon:
-            ruptures = self.filter_ruptures(src, sites)
+        with self.ir_mon:
+            all_ruptures = list(src.iter_ruptures())
+        # all_ruptures can be empty only in UCERF
+        weight = 1. / (len(all_ruptures) or 1)
+        ruptures = []
+        with self.ctx_mon:
+            for rup in all_ruptures:
+                rup.weight = weight
+                try:
+                    rup.sctx, rup.dctx = self.make_contexts(sites, rup)
+                except FarAwayRupture:
+                    continue
+                ruptures.append(rup)
         if not ruptures:
             return {}
         try:
-            with poe_mon:
+            with self.poe_mon:
                 pmap = self.make_pmap(ruptures, imtls, trunclevel, rup_indep)
         except Exception as err:
             etype, err, tb = sys.exc_info()
@@ -233,11 +266,15 @@ class ContextMaker(object):
         acc = AccumDict(accum=[])
         ctx_mon = monitor('disagg_contexts', measuremem=False)
         pne_mon = monitor('disaggregate_pne', measuremem=False)
+        clo_mon = monitor('get_closest', measuremem=False)
         for rupture in ruptures:
             with ctx_mon:
                 orig_dctx = DistancesContext(
                     (param, get_distances(rupture, sitecol, param))
                     for param in self.REQUIRES_DISTANCES)
+                self.add_rup_params(rupture)
+            with clo_mon:  # this is faster than computing orig_dctx
+                closest_points = rupture.surface.get_closest_points(sitecol)
             cache = {}
             for r, gsim in self.gsim_by_rlzi.items():
                 dctx = orig_dctx.roundup(gsim.minimum_distance)
@@ -253,7 +290,6 @@ class ContextMaker(object):
                                     truncnorm, epsilons)
                                 cache[gsim, imt, iml] = pne
                         acc[poe, str(imt), r].append(pne)
-            closest_points = rupture.surface.get_closest_points(sitecol)
             acc['mags'].append(rupture.mag)
             acc['dists'].append(getattr(dctx, self.filter_distance))
             acc['lons'].append(closest_points.lons)
@@ -261,7 +297,7 @@ class ContextMaker(object):
         return acc
 
 
-class BaseContext(with_metaclass(abc.ABCMeta)):
+class BaseContext(metaclass=abc.ABCMeta):
     """
     Base class for context object.
     """
@@ -297,10 +333,10 @@ class SitesContext(BaseContext):
     _slots_ = ('vs30', 'vs30measured', 'z1pt0', 'z2pt5', 'backarc',
                'lons', 'lats')
 
-    def __init__(self, sitecol=None):
+    def __init__(self, sitecol=None, slots=None):
         if sitecol is not None:
             self.sids = sitecol.sids
-            for name in self._slots_:
+            for name in self._slots_ if slots is None else slots:
                 setattr(self, name, getattr(sitecol, name))
 
 

@@ -15,8 +15,6 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with OpenQuake. If not, see <http://www.gnu.org/licenses/>.
-
-from __future__ import division
 import operator
 import logging
 import csv
@@ -423,16 +421,38 @@ class AssetCollection(object):
             assets_by_site[ass['site_id']].append(self[i])
         return numpy.array(assets_by_site)
 
-    def reduce(self, sids):
+    def reduce(self, sitecol):
         """
-        :returns: a reduced AssetCollection on the given site IDs
+        :returns: a reduced AssetCollection on the given sitecol
         """
-        ok_indices = numpy.sum([self.array['site_id'] == sid for sid in sids],
-                               axis=0, dtype=bool)
+        ok_indices = numpy.sum(
+            [self.array['site_id'] == sid for sid in sitecol.sids],
+            axis=0, dtype=bool)
         new = object.__new__(self.__class__)
         vars(new).update(vars(self))
         new.array = self.array[ok_indices]
         new.asset_refs = self.asset_refs[ok_indices]
+        return new
+
+    def reduce_also(self, sitecol):
+        """
+        :returns: a reduced AssetCollection on the given sitecol
+        NB: diffently from .reduce, also the SiteCollection is reduced
+        and turned into a complete site collection.
+        """
+        array = []
+        asset_refs = []
+        for idx, sid in enumerate(sitecol.sids):
+            mask = self.array['site_id'] == sid
+            arr = self.array[mask]
+            arr['site_id'] = idx
+            array.append(arr)
+            asset_refs.append(self.asset_refs[mask])
+        new = object.__new__(self.__class__)
+        vars(new).update(vars(self))
+        new.array = numpy.concatenate(array)
+        new.asset_refs = numpy.concatenate(asset_refs)
+        sitecol.make_complete()
         return new
 
     def values(self, aids=None):

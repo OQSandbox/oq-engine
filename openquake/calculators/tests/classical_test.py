@@ -15,8 +15,6 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with OpenQuake. If not, see <http://www.gnu.org/licenses/>.
-
-import unittest
 import numpy
 from nose.plugins.attrib import attr
 from openquake.baselib import parallel
@@ -395,7 +393,7 @@ hazard_uhs-mean.csv
             'hazard_curve-mean-SA(1.0).csv', 'hazard_curve-mean-SA(2.0).csv',
         ], case_22.__file__)
         checksum = self.calc.datastore['/'].attrs['checksum32']
-        self.assertEqual(checksum, 2061302359)
+        self.assertEqual(checksum, 1554747528)
 
     @attr('qa', 'hazard', 'classical')
     def test_case_23(self):  # filtering away on TRT
@@ -440,4 +438,5 @@ hazard_uhs-mean.csv
 
     @attr('qa', 'hazard', 'classical')
     def test_case_30(self):  # point on the international data line
-        self.assert_curves_ok(['hazard_curve-PGA.csv'], case_30.__file__)
+        if NOT_DARWIN:  # broken on macOS
+            self.assert_curves_ok(['hazard_curve-PGA.csv'], case_30.__file__)

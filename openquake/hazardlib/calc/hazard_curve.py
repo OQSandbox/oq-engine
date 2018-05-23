@@ -53,7 +53,6 @@ NB: the implementation in the engine is smarter and more
 efficient. Here we start a parallel computation per each realization,
 the engine manages all the realizations at once.
 """
-from __future__ import division
 import time
 import operator
 import numpy
@@ -89,9 +88,7 @@ def classical(group, src_filter, gsims, param, monitor=Monitor()):
     maxdist = src_filter.integration_distance
     imtls = param['imtls']
     trunclevel = param.get('truncation_level')
-    cmaker = ContextMaker(gsims, maxdist, param['filter_distance'])
-    ctx_mon = monitor('make_contexts', measuremem=False)
-    poe_mon = monitor('get_poes', measuremem=False)
+    cmaker = ContextMaker(gsims, maxdist, param['filter_distance'], monitor)
     pmap = AccumDict({grp_id: ProbabilityMap(len(imtls.array), len(gsims))
                       for grp_id in grp_ids})
     # AccumDict of arrays with 4 elements weight, nsites, calc_time, split
@@ -100,8 +97,7 @@ def classical(group, src_filter, gsims, param, monitor=Monitor()):
     for src, s_sites in src_filter(group):  # filter now
         t0 = time.time()
         indep = group.rup_interdep == 'indep' if mutex_weight else True
-        poemap = cmaker.poe_map(
-            src, s_sites, imtls, trunclevel, ctx_mon, poe_mon, indep)
+        poemap = cmaker.poe_map(src, s_sites, imtls, trunclevel, indep)
         if mutex_weight:  # mutex sources
             weight = mutex_weight[src.source_id]
             for sid in poemap:

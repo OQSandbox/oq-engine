@@ -31,7 +31,7 @@ from openquake.baselib import performance, datastore, general
 from openquake.commonlib import readinput, oqvalidation
 
 
-NOT_DARWIN = sys.platform() != 'darwin'
+NOT_DARWIN = sys.platform != 'darwin'
 
 
 class DifferentFiles(Exception):
@@ -84,8 +84,7 @@ class CalculatorTestCase(unittest.TestCase):
         oq = oqvalidation.OqParam(**params)
         oq.validate()
         # change this when debugging the test
-        monitor = performance.Monitor(self.testdir)
-        return base.calculators(oq, monitor)
+        return base.calculators(oq)
 
     def run_calc(self, testfile, job_ini, **kw):
         """
