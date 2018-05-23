@@ -98,8 +98,6 @@ class GmfEbRiskTestCase(CalculatorTestCase):
 
     @attr('qa', 'risk', 'event_based_risk')
     def test_case_master(self):
-        if sys.platform == 'darwin':
-            raise unittest.SkipTest('macOS')
         self.run_calc(case_master.__file__, 'job.ini', insured_losses='false')
         calc0 = self.calc.datastore  # single file event_based_risk
         self.run_calc(case_master.__file__, 'job.ini', insured_losses='false',
@@ -114,6 +112,9 @@ class GmfEbRiskTestCase(CalculatorTestCase):
         calc2 = self.calc.datastore  # two files event_based_risk
 
         check_csm_info(calc0, calc2)  # the csm_info arrays must be equal
+
+        if sys.platform == 'darwin':
+            raise unittest.SkipTest('MacOSX')
 
         # compare the average losses for an event_based_risk
         # case_master calculation from ruptures
