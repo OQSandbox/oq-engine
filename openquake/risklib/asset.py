@@ -240,8 +240,6 @@ U32 = numpy.uint32
 F32 = numpy.float32
 U64 = numpy.uint64
 TWO16 = 2 ** 16
-EVENTS = -2
-NBYTES = -1
 by_taxonomy = operator.attrgetter('taxonomy')
 
 
@@ -605,6 +603,7 @@ def build_asset_array(assets_by_site, tagnames=()):
                     value = getattr(asset, name + 's')[lt]
                 record[field] = value
     return assetcol, ' '.join(occupancy_periods)
+
 
 # ########################### exposure ############################ #
 

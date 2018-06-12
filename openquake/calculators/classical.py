@@ -158,7 +158,6 @@ class PSHACalculator(base.HazardCalculator):
         param = dict(truncation_level=oq.truncation_level, imtls=oq.imtls,
                      filter_distance=oq.filter_distance)
         minweight = source.MINWEIGHT * math.sqrt(len(self.sitecol))
-        totweight = 0
         num_tasks = 0
         num_sources = 0
         csm, src_filter = self.filter_csm()
@@ -167,7 +166,6 @@ class PSHACalculator(base.HazardCalculator):
             logging.info('Using minweight=%d', minweight)
         else:
             logging.info('Using maxweight=%d', maxweight)
-        totweight += csm.info.tot_weight
 
         if csm.has_dupl_sources and not opt:
             logging.warn('Found %d duplicated sources',
@@ -187,7 +185,7 @@ class PSHACalculator(base.HazardCalculator):
                 num_tasks += 1
                 num_sources += len(block)
         logging.info('Sent %d sources in %d tasks', num_sources, num_tasks)
-        self.csm.info.tot_weight = totweight
+        self.csm.info.tot_weight = csm.info.tot_weight
 
     def post_execute(self, pmap_by_grp_id):
         """
@@ -213,17 +211,23 @@ class PSHACalculator(base.HazardCalculator):
                     if oq.disagg_by_src:
                         data.append(
                             (grp_id, grp_source[grp_id], src_name[grp_id]))
-            if 'poes' in self.datastore:
-                self.datastore.set_nbytes('poes')
-                if oq.disagg_by_src and self.csm.info.get_num_rlzs() == 1:
-                    # this is useful for disaggregation, which is implemented
-                    # only for the case of a single realization
-                    self.datastore['disagg_by_src/source_id'] = numpy.array(
-                        sorted(data), grp_source_dt)
+        if 'poes' in self.datastore:
+            self.datastore.set_nbytes('poes')
+            if oq.disagg_by_src and self.csm.info.get_num_rlzs() == 1:
+                # this is useful for disaggregation, which is implemented
+                # only for the case of a single realization
+                self.datastore['disagg_by_src/source_id'] = numpy.array(
+                    sorted(data), grp_source_dt)
+
+            # save a copy of the poes in hdf5cache
+            if hasattr(self, 'hdf5cache'):
+                with hdf5.File(self.hdf5cache) as cache:
+                    cache['oqparam'] = oq
+                    self.datastore.hdf5.copy('poes', cache)
 
 
 # used in PreClassicalCalculator
-def count_ruptures(sources, srcfilter, gsims, param, monitor):
+def count_eff_ruptures(sources, srcfilter, gsims, param, monitor):
     """
     Count the number of ruptures contained in the given sources by applying a
     raw source filtering on the integration distance. Return a dictionary
@@ -253,7 +257,7 @@ class PreCalculator(PSHACalculator):
     Calculator to filter the sources and compute the number of effective
     ruptures
     """
-    core_task = count_ruptures
+    core_task = count_eff_ruptures
 
 
 def fix_ones(pmap):
@@ -326,15 +330,17 @@ class ClassicalCalculator(PSHACalculator):
         # initialize datasets
         N = len(self.sitecol.complete)
         L = len(oq.imtls.array)
-        attrs = dict(
-            __pyclass__='openquake.hazardlib.probability_map.ProbabilityMap',
-            sids=numpy.arange(N, dtype=numpy.uint32))
+        pyclass = 'openquake.hazardlib.probability_map.ProbabilityMap'
+        all_sids = self.sitecol.complete.sids
         nbytes = N * L * 4  # bytes per realization (32 bit floats)
         totbytes = 0
         if num_rlzs > 1:
             for name, stat in oq.hazard_stats():
                 self.datastore.create_dset(
-                    'hcurves/' + name, F32, (N, L, 1), attrs=attrs)
+                    'hcurves/%s/array' % name, F32, (N, L, 1))
+                self.datastore['hcurves/%s/sids' % name] = all_sids
+                self.datastore.set_attrs(
+                    'hcurves/%s' % name, __pyclass__=pyclass)
                 totbytes += nbytes
         if 'hcurves' in self.datastore:
             self.datastore.set_attrs('hcurves', nbytes=totbytes)
@@ -353,11 +359,9 @@ class ClassicalCalculator(PSHACalculator):
         """
         monitor = self.monitor('build_hcurves_and_stats')
         hstats = self.oqparam.hazard_stats()
-        parent = self.can_read_parent()
-        if parent is None:
-            parent = self.datastore
+        parent = self.can_read_parent() or self.datastore
         for t in self.sitecol.split_in_tiles(self.oqparam.concurrent_tasks):
-            pgetter = getters.PmapGetter(parent, t.sids, self.rlzs_assoc)
+            pgetter = getters.PmapGetter(parent, self.rlzs_assoc, t.sids)
             if parent is self.datastore:  # read now, not in the workers
                 logging.info('Reading PoEs on %d sites', len(t))
                 pgetter.init()
@@ -375,7 +379,7 @@ class ClassicalCalculator(PSHACalculator):
             for kind in pmap_by_kind:
                 pmap = pmap_by_kind[kind]
                 if pmap:
-                    key = 'hcurves/' + kind
+                    key = 'hcurves/%s/array' % kind
                     dset = self.datastore.getitem(key)
                     for sid in pmap:
                         dset[sid] = pmap[sid].array

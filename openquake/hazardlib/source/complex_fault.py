@@ -176,7 +176,7 @@ class ComplexFaultSource(ParametricSeismicSource):
                  rupture_aspect_ratio, temporal_occurrence_model,
                  # complex fault specific parameters
                  edges, rake):
-        super(ComplexFaultSource, self).__init__(
+        super().__init__(
             source_id, name, tectonic_region_type, mfd, rupture_mesh_spacing,
             magnitude_scaling_relationship, rupture_aspect_ratio,
             temporal_occurrence_model)
@@ -256,8 +256,7 @@ class ComplexFaultSource(ParametricSeismicSource):
         if self.num_ruptures <= MINWEIGHT:
             yield self  # not splittable
             return
-        mag_rates = [(mag, rate) for (mag, rate) in
-                     self.mfd.get_annual_occurrence_rates() if rate]
+        mag_rates = self.get_annual_occurrence_rates()
         for i, (mag, rate) in enumerate(mag_rates):
             src = copy.copy(self)
             del src._nr

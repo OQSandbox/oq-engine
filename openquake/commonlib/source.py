@@ -25,9 +25,10 @@ import operator
 import collections
 import numpy
 
-from openquake.baselib import hdf5, node
+from openquake.baselib import performance, hdf5, node
 from openquake.baselib.python3compat import decode
-from openquake.baselib.general import groupby, group_array, gettemp, AccumDict
+from openquake.baselib.general import (
+    groupby, group_array, gettemp, AccumDict, random_filter)
 from openquake.hazardlib import (
     nrml, source, sourceconverter, InvalidFile, probability_map, stats)
 from openquake.hazardlib.gsim.gmpe_table import GMPETable
@@ -45,7 +46,7 @@ rlz_dt = numpy.dtype([
     ('branch_path', 'S200'), ('gsims', 'S100'), ('weight', F32)])
 
 
-def split_sources(srcs):
+def split_sources(srcs, min_mag):
     """
     :param srcs: sources
     :returns: a pair (split sources, split time)
@@ -54,7 +55,19 @@ def split_sources(srcs):
     split_time = {}  # src_id -> dt
     for src in srcs:
         t0 = time.time()
-        splits = list(src)
+        if min_mag and src.get_min_max_mag()[0] < min_mag:
+            splits = []
+            for s in src:
+                if min_mag and s.get_min_max_mag()[0] < min_mag:
+                    # discard some ruptures
+                    s.min_mag = min_mag
+                    s.num_ruptures = s.count_ruptures()
+                    if s.num_ruptures:
+                        splits.append(s)
+                else:
+                    splits.append(s)
+        else:
+            splits = list(src)
         split_time[src.source_id] = time.time() - t0
         sources.extend(splits)
         if len(splits) > 1:
@@ -569,7 +582,9 @@ class CompositionInfo(object):
                 before = self.gsim_lt.get_num_paths()
                 gsim_lt = self.gsim_lt.reduce(trts_)
                 after = gsim_lt.get_num_paths()
-                if before > after:
+                if sm_lt_path and before > after:
+                    # print the warning only when saving the logic tree,
+                    # i.e. when called with sm_lt_path in store_source_info
                     logging.warn('Reducing the logic tree of %s from %d to %d '
                                  'realizations', smodel.name, before, after)
                 gsim_rlzs = list(gsim_lt)
@@ -675,12 +690,14 @@ class CompositeSourceModel(collections.Sequence):
         else:
             self.has_dupl_sources = len(dupl_sources)
 
-    def split_all(self):
+    def split_all(self, min_mag=0):
         """
         Split all sources in the composite source model.
 
+        :param samples_factor: if given, sample the sources
         :returns: a dictionary source_id -> split_time
         """
+        sample_factor = os.environ.get('OQ_SAMPLE_SOURCES')
         ngsims = {trt: len(gs) for trt, gs in self.gsim_lt.values.items()}
         split_time = AccumDict()
         for sm in self.source_models:
@@ -691,10 +708,15 @@ class CompositeSourceModel(collections.Sequence):
                     src.ngsims = ngsims[src.tectonic_region_type]
                 if getattr(src_group, 'src_interdep', None) != 'mutex':
                     # mutex sources cannot be split
-                    srcs, stime = split_sources(src_group)
+                    srcs, stime = split_sources(src_group, min_mag)
                     for src in src_group:
                         s = src.source_id
                         self.infos[s].split_time = stime[s]
+                    if sample_factor:
+                        # debugging tip to reduce the size of a calculation
+                        # OQ_SAMPLE_SOURCES=.01 oq engine --run job.ini
+                        # will run a computation 100 times smaller
+                        srcs = random_filter(srcs, float(sample_factor))
                     src_group.sources = srcs
                     split_time += stime
         return split_time
@@ -733,7 +755,7 @@ class CompositeSourceModel(collections.Sequence):
         new.sm_id = sm_id
         return new
 
-    def filter(self, src_filter):
+    def filter(self, src_filter, monitor=performance.Monitor()):
         """
         Generate a new CompositeSourceModel by filtering the sources on
         the given site collection.
@@ -742,7 +764,7 @@ class CompositeSourceModel(collections.Sequence):
         :param monitor: a Monitor instance
         :returns: a new CompositeSourceModel instance
         """
-        sources_by_grp = src_filter.pfilter(self.get_sources())
+        sources_by_grp = src_filter.pfilter(self.get_sources(), monitor)
         source_models = []
         for sm in self.source_models:
             src_groups = []
@@ -825,6 +847,8 @@ class CompositeSourceModel(collections.Sequence):
         for src_group in self.src_groups:
             if kind in ('all', src_group.src_interdep):
                 sources.extend(src_group)
+        if kind == 'all' and not sources:
+            raise RuntimeError('All sources were filtered away!')
         return sources
 
     def get_sources_by_trt(self):
@@ -840,16 +864,23 @@ class CompositeSourceModel(collections.Sequence):
         if self.optimize_same_id is False:
             return acc
         # extract a single source from multiple sources with the same ID
+        n = 0
+        tot = 0
         dic = {}
         for trt in acc:
             dic[trt] = []
             for grp in groupby(acc[trt], lambda x: x.source_id).values():
                 src = grp[0]
+                n += 1
+                tot += len(grp)
                 # src.src_group_id can be a list if get_sources_by_trt was
                 # called before
                 if len(grp) > 1 and not isinstance(src.src_group_id, list):
                     src.src_group_id = [s.src_group_id for s in grp]
                 dic[trt].append(src)
+        if n < tot:
+            logging.info('Reduced %d sources to %d sources with unique IDs',
+                         tot, n)
         return dic
 
     def get_num_sources(self):

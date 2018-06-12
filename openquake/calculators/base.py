@@ -32,6 +32,7 @@ from openquake.baselib import (
     config, general, hdf5, datastore, __version__ as engine_version)
 from openquake.baselib.performance import Monitor
 from openquake.hazardlib.calc.filters import SourceFilter, RtreeFilter, rtree
+from openquake.hazardlib.source.base import BaseSeismicSource
 from openquake.risklib import riskinput, riskmodels
 from openquake.commonlib import readinput, source, calc, writers
 from openquake.baselib.parallel import Starmap
@@ -119,10 +120,12 @@ class BaseCalculator(metaclass=abc.ABCMeta):
     from_engine = False  # set by engine.run_calc
     pre_calculator = None  # to be overridden
     is_stochastic = False  # True for scenario and event based calculators
+    dynamic_parent = None
 
     def __init__(self, oqparam, calc_id=None):
         self.datastore = datastore.DataStore(calc_id)
-        self._monitor = Monitor('total runtime', measuremem=True)
+        self._monitor = Monitor(
+            '%s.run' % self.__class__.__name__, measuremem=True)
         self._monitor.hdf5path = self.datastore.hdf5path
         self.oqparam = oqparam
 
@@ -164,6 +167,7 @@ class BaseCalculator(metaclass=abc.ABCMeta):
         """
         global logversion
         with self._monitor:
+            self._monitor.username = kw.get('username', '')
             self.close = close
             self.set_log_format()
             if logversion:  # make sure this is logged only once
@@ -324,17 +328,18 @@ class HazardCalculator(BaseCalculator):
         :returns: (filtered CompositeSourceModel, SourceFilter)
         """
         oq = self.oqparam
-        hdf5path = self.datastore.hdf5path.replace('calc_', 'temp_')
+        mon = self.monitor('prefilter')
+        self.hdf5cache = self.datastore.hdf5cache()
         src_filter = SourceFilter(self.sitecol.complete, oq.maximum_distance,
-                                  hdf5path)
+                                  self.hdf5cache)
         if (oq.prefilter_sources == 'numpy' or rtree is None):
-            csm = self.csm.filter(src_filter)
+            csm = self.csm.filter(src_filter, mon)
         elif oq.prefilter_sources == 'rtree':
             prefilter = RtreeFilter(self.sitecol.complete, oq.maximum_distance,
-                                    hdf5path)
-            csm = self.csm.filter(prefilter)
+                                    self.hdf5cache)
+            csm = self.csm.filter(prefilter, mon)
         else:  # prefilter_sources='no'
-            csm = self.csm.filter(SourceFilter(None, {}))
+            csm = self.csm.filter(SourceFilter(None, {}), mon)
         return csm, src_filter
 
     def can_read_parent(self):
@@ -346,8 +351,11 @@ class HazardCalculator(BaseCalculator):
         read_access = (
             config.distribution.oq_distribute in ('no', 'processpool') or
             config.directory.shared_dir)
-        if (self.oqparam.hazard_calculation_id and read_access
-                and 'gmf_data' not in self.datastore.hdf5):
+        hdf5cache = getattr(self.precalc, 'hdf5cache', None)
+        if hdf5cache and read_access:
+            return hdf5cache
+        elif (self.oqparam.hazard_calculation_id and read_access and
+              'gmf_data' not in self.datastore.hdf5):
             self.datastore.parent.close()  # make sure it is closed
             return self.datastore.parent
 
@@ -391,7 +399,7 @@ class HazardCalculator(BaseCalculator):
                     self.csm = self.csm.grp_by_src()
             with self.monitor('splitting sources', measuremem=1, autoflush=1):
                 logging.info('Splitting sources')
-                self.csm.split_all()
+                self.csm.split_all(oq.minimum_magnitude)
             if self.is_stochastic:
                 # initialize the rupture serial numbers before filtering; in
                 # this way the serials are independent from the site collection
@@ -463,7 +471,7 @@ class HazardCalculator(BaseCalculator):
         """
         with self.monitor('reading exposure', autoflush=True):
             self.sitecol, self.assetcol = readinput.get_sitecol_assetcol(
-                self.oqparam, haz_sitecol)
+                self.oqparam, haz_sitecol, self.riskmodel.loss_types)
             readinput.exposure = None  # reset the global
 
     def get_min_iml(self, oq):
@@ -507,6 +515,7 @@ class HazardCalculator(BaseCalculator):
         site collection, possibly extracted from the exposure.
         """
         oq = self.oqparam
+        self.load_riskmodel()  # must be called first
         with self.monitor('reading site collection', autoflush=True):
             if oq.hazard_calculation_id:
                 with datastore.read(oq.hazard_calculation_id) as dstore:
@@ -523,7 +532,6 @@ class HazardCalculator(BaseCalculator):
                      if self.datastore.parent else None)
         if 'exposure' in oq.inputs:
             self.read_exposure(haz_sitecol)
-            self.load_riskmodel()  # must be called *after* read_exposure
             self.datastore['assetcol'] = self.assetcol
         elif 'assetcol' in self.datastore.parent:
             assetcol = self.datastore.parent['assetcol']
@@ -544,10 +552,9 @@ class HazardCalculator(BaseCalculator):
                              len(self.assetcol), len(assetcol))
             else:
                 self.assetcol = assetcol
-            self.load_riskmodel()
         else:  # no exposure
-            self.load_riskmodel()
             self.sitecol = haz_sitecol
+            logging.info('Read %d hazard sites', len(self.sitecol))
 
         if oq_hazard:
             parent = self.datastore.parent
@@ -613,9 +620,9 @@ class HazardCalculator(BaseCalculator):
         self.rlzs_assoc = self.csm.info.get_rlzs_assoc(self.oqparam.sm_lt_path)
         if not self.rlzs_assoc:
             raise RuntimeError('Empty logic tree: too much filtering?')
-
         self.datastore['csm_info'] = self.csm.info
         R = len(self.rlzs_assoc.realizations)
+        logging.info('There are %d realizations', R)
         if self.is_stochastic and R >= TWO16:
             # rlzi is 16 bit integer in the GMFs, so there is hard limit or R
             raise ValueError(
@@ -749,10 +756,11 @@ class RiskCalculator(HazardCalculator):
                         reduced_eps[ass.ordinal] = eps[ass.ordinal]
             # build the riskinputs
             if kind == 'poe':  # hcurves, shape (R, N)
-                getter = PmapGetter(dstore, sids, self.rlzs_assoc)
+                getter = PmapGetter(dstore, self.rlzs_assoc, sids)
                 getter.num_rlzs = self.R
             else:  # gmf
-                getter = GmfDataGetter(dstore, sids, self.R, num_events)
+                getter = GmfDataGetter(dstore, sids, self.R, num_events,
+                                       self.oqparam.imtls)
             if dstore is self.datastore:
                 # read the hazard data in the controller node
                 logging.info('Reading hazard')
@@ -804,18 +812,14 @@ def save_gmdata(calc, n_rlzs):
     :param n_rlzs: the total number of realizations
     """
     n_sites = len(calc.sitecol)
-    dtlist = ([(imt, F32) for imt in calc.oqparam.imtls] +
-              [('events', U32), ('nbytes', U32)])
+    dtlist = ([(imt, F32) for imt in calc.oqparam.imtls] + [('events', U32)])
     array = numpy.zeros(n_rlzs, dtlist)
     for rlzi in sorted(calc.gmdata):
-        data = calc.gmdata[rlzi]  # (imts, events, nbytes)
-        events = data[-2]
-        nbytes = data[-1]
-        gmv = data[:-2] / events / n_sites
-        array[rlzi] = tuple(gmv) + (events, nbytes)
+        data = calc.gmdata[rlzi]  # (imts, events)
+        events = data[-1]
+        gmv = data[:-1] / events / n_sites
+        array[rlzi] = tuple(gmv) + (events,)
     calc.datastore['gmdata'] = array
-    logging.info('Generated %s of GMFs',
-                 general.humansize(array['nbytes'].sum()))
 
 
 def save_gmfs(calculator):
@@ -827,11 +831,12 @@ def save_gmfs(calculator):
     oq = calculator.oqparam
     logging.info('Reading gmfs from file')
     if oq.inputs['gmfs'].endswith('.csv'):
+        # TODO: check if import_gmfs can be removed
         eids, num_rlzs, calculator.gmdata = import_gmfs(
             dstore, oq.inputs['gmfs'], calculator.sitecol.complete.sids)
         save_gmdata(calculator, calculator.R)
     else:  # XML
-        eids, gmfs = readinput.get_gmfs(oq)
+        eids, gmfs = readinput.eids, readinput.gmfs
     E = len(eids)
     calculator.eids = eids
     if hasattr(oq, 'number_of_ground_motion_fields'):
@@ -910,11 +915,10 @@ def import_gmfs(dstore, fname, sids):
 
     # compute gmdata
     dic = general.group_array(array.view(gmf_data_dt), 'rlzi')
-    gmdata = {r: numpy.zeros(n_imts + 2, F32) for r in range(num_rlzs)}
+    gmdata = {r: numpy.zeros(n_imts + 1, F32) for r in range(num_rlzs)}
     for r in dic:
         gmv = dic[r]['gmv']
-        rec = gmdata[r]  # (imt1, ..., imtM, nevents, nbytes)
-        rec[:-2] += gmv.sum(axis=0)
-        rec[-2] += len(gmv)
-        rec[-1] += gmv.nbytes
+        rec = gmdata[r]  # (imt1, ..., imtM, nevents)
+        rec[:-1] += gmv.sum(axis=0)
+        rec[-1] += len(gmv)
     return eids, num_rlzs, gmdata

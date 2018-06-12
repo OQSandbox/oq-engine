@@ -20,7 +20,7 @@ from nose.plugins.attrib import attr
 import numpy
 from openquake.qa_tests_data.scenario_risk import (
     case_1, case_2, case_2d, case_1g, case_1h, case_3, case_4, case_5,
-    case_6a, case_7, case_8, occupants, case_master, case_shakemap)
+    case_6a, case_7, case_8, case_9, occupants, case_master, case_shakemap)
 
 from openquake.baselib.general import gettemp
 from openquake.commonlib.logictree import InvalidLogicTree
@@ -88,7 +88,7 @@ class ScenarioRiskTestCase(CalculatorTestCase):
 
         # test agglosses
         tot = extract(self.calc.datastore, 'agglosses/occupants')
-        aac(tot.array, 0.01355099)
+        aac(tot.array, [0.0282811])
 
         # test agglosses with *
         tbl = extract(self.calc.datastore, 'agglosses/occupants?taxonomy=*')
@@ -220,19 +220,26 @@ class ScenarioRiskTestCase(CalculatorTestCase):
         view('fullreport', self.calc.datastore)
 
     @attr('qa', 'risk', 'scenario_risk')
+    def test_case_9(self):
+        # using gmfs.xml
+        self.run_calc(case_9.__file__, 'job.ini')
+        agglosses = extract(self.calc.datastore, 'agglosses/structural')
+        aac(agglosses.array, [7306.7124])
+
+    @attr('qa', 'risk', 'scenario_risk')
     def test_case_shakemap(self):
         self.run_calc(case_shakemap.__file__, 'pre-job.ini')
         self.run_calc(case_shakemap.__file__, 'job.ini',
                       hazard_calculation_id=str(self.calc.datastore.calc_id))
         sitecol = self.calc.datastore['sitecol']
-        self.assertEqual(len(sitecol), 8)
+        self.assertEqual(len(sitecol), 9)
         gmfdict = dict(extract(self.calc.datastore, 'gmf_data'))
         gmfa = gmfdict['rlz-000']
-        self.assertEqual(gmfa.shape, (8,))
+        self.assertEqual(gmfa.shape, (9,))
         self.assertEqual(gmfa.dtype.names,
                          ('lon', 'lat', 'PGA', 'SA(0.3)', 'SA(1.0)'))
         agglosses = extract(self.calc.datastore, 'agglosses-rlzs')
-        aac(agglosses['mean'], numpy.array([[314017.34]], numpy.float32),
+        aac(agglosses['mean'], numpy.array([[795843.7]], numpy.float32),
             atol=.1)
-        aac(agglosses['stddev'], numpy.array([[263641.7]], numpy.float32),
+        aac(agglosses['stddev'], numpy.array([[951769.25]], numpy.float32),
             atol=.1)

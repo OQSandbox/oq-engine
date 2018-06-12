@@ -39,6 +39,7 @@ if [ -n "$GEM_SET_DEBUG" -a "$GEM_SET_DEBUG" != "false" ]; then
     set -x
 fi
 set -e
+env | grep -q "^GEM_MASTER_BRANCH=" || export GEM_MASTER_BRANCH="master"
 GEM_GIT_REPO="git://github.com/gem"
 GEM_GIT_PACKAGE="oq-engine"
 GEM_DEPENDS="oq-python-deb|oq-python3.5|deb oq-libs|python3-oq-libs|deb oq-libs-extra|python3-oq-libs-extra|sub"
@@ -175,9 +176,9 @@ usage () {
 
     echo
     echo "USAGE:"
-    echo "    $0 [<-s|--serie> <precise|trusty|xenial>] [-D|--development] [-S--sources_copy] [-B|--binaries] [-U|--unsigned] [-R|--repository]    build debian source package."
-    echo "       if -s is present try to produce sources for a specific ubuntu version (precise, trusty or xenial),"
-    echo "           (default precise)"
+    echo "    $0 [<-s|--serie> <trusty|xenial|bionic>] [-D|--development] [-S--sources_copy] [-B|--binaries] [-U|--unsigned] [-R|--repository]    build debian source package."
+    echo "       if -s is present try to produce sources for a specific ubuntu version (trusty, xenial or bionic),"
+    echo "           (default xenial)"
     echo "       if -S is present try to copy sources to <GEM_DEB_MONOTONE>/<BUILD_UBUVER>/source directory"
     echo "       if -B is present binary package is build too."
     echo "       if -R is present update the local repository to the new current package"
@@ -215,7 +216,7 @@ _wait_ssh () {
 
 add_custom_pkg_repo () {
     # install package to manage repository properly
-    ssh "$lxc_ip" "sudo apt-get install -y python-software-properties software-properties-common"
+    ssh "$lxc_ip" "sudo apt-get install -y software-properties-common"
 
     # add custom packages
     if ! ssh "$lxc_ip" ls repo/custom_pkgs >/dev/null ; then
@@ -244,7 +245,7 @@ add_local_pkg_repo () {
         dep_branch="master"
     fi
 
-    if [ "$dep_repo" = "$GEM_GIT_REPO" -a "$dep_branch" = "master" ]; then
+    if [ "$dep_repo" = "$GEM_GIT_REPO" -a "$dep_branch" = "${GEM_MASTER_BRANCH}" ]; then
         GEM_DEB_SERIE="master"
     else
         GEM_DEB_SERIE="devel/$(echo "$dep_repo" | sed 's@^.*://@@g;s@/@__@g;s/\./-/g')__${dep_branch}"
@@ -340,7 +341,8 @@ _pkgbuild_innervm_run () {
     ssh "$lxc_ip" "sudo mk-build-deps --install --tool 'apt-get -y' build-deb/debian/control"
 
     ssh "$lxc_ip" cd build-deb \&\& dpkg-buildpackage $DPBP_FLAG
-    scp "$lxc_ip:"*.{tar.gz,changes,dsc} ../
+    scp "$lxc_ip:"*.{tar.?z,changes,dsc} ../
+    scp "$lxc_ip:"*.buildinfo ../ || true
     if echo "$DPBP_FLAG" | grep -q -v -- '-S'; then
         scp "$lxc_ip:"*.deb ../
     fi
@@ -452,8 +454,6 @@ _builddoc_innervm_run () {
     ssh "$lxc_ip" "sudo apt-get -y upgrade"
 
     gpg -a --export | ssh "$lxc_ip" "sudo apt-key add -"
-    # install package to manage repository properly
-    # ssh "$lxc_ip" sudo apt-get install -y python-software-properties
 
     ssh "$lxc_ip" mkdir -p "repo"
 
@@ -500,14 +500,16 @@ _pkgtest_innervm_run () {
     ssh "$lxc_ip" "sudo apt-get -y upgrade"
     gpg -a --export | ssh "$lxc_ip" "sudo apt-key add -"
     # install package to manage repository properly
-    ssh "$lxc_ip" "sudo apt-get install -y python-software-properties"
+    ssh "$lxc_ip" "sudo apt-get install -y software-properties-common"
 
     # create a remote "local repo" where place $GEM_DEB_PACKAGE package
     ssh "$lxc_ip" mkdir -p "repo/${GEM_DEB_PACKAGE}"
     scp "${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_"*.deb "${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}-master_"*.deb \
         "${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}-worker_"*.deb "${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_"*.changes \
-        "${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_"*.dsc "${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_"*.tar.gz \
+        "${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_"*.dsc "${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_"*.tar.?z \
         "${GEM_BUILD_ROOT}/Packages"* "${GEM_BUILD_ROOT}/Sources"*  "${GEM_BUILD_ROOT}/Release"* "$lxc_ip:repo/${GEM_DEB_PACKAGE}"
+    scp "${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_"*.buildinfo \
+        "$lxc_ip:repo/${GEM_DEB_PACKAGE}" || true
     ssh "$lxc_ip" sudo apt-add-repository \"deb file:/home/ubuntu/repo/${GEM_DEB_PACKAGE} ./\"
 
     if [ -f _jenkins_deps_info ]; then
@@ -1039,7 +1041,7 @@ EOF
              "$(wc --bytes Sources | cut --delimiter=' ' --fields=1)"
       printf ' '"$(sha256sum Sources.gz | cut --delimiter=' ' --fields=1)"' %16d Sources.gz\n' \
              "$(wc --bytes Sources.gz | cut --delimiter=' ' --fields=1)" ) >> Release
-    gpg --armor --detach-sign --output Release.gpg Release
+    gpg --armor --detach-sign --output Release.gpg --local-user "$DEBFULLNAME" Release
     cd -
 
     sudo echo
@@ -1073,7 +1075,7 @@ EOF
     if [ "$BUILD_REPOSITORY" -eq 1 -a -d "${GEM_DEB_REPO}" ]; then
         if [ "$branch" != "" ]; then
             repo_id="$(repo_id_get)"
-            if [ "git://$repo_id" != "$GEM_GIT_REPO" -o "$branch" != "master" ]; then
+            if [ "git://$repo_id" != "$GEM_GIT_REPO" -o "$branch" != "${GEM_MASTER_BRANCH}" ]; then
                 CUSTOM_SERIE="devel/$(echo "$repo_id" | sed "s@/@__@g;s/\./-/g")__${branch}"
                 if [ "$CUSTOM_SERIE" != "" ]; then
                     GEM_DEB_SERIE="$CUSTOM_SERIE"
@@ -1085,11 +1087,13 @@ EOF
 
         # if the monotone directory exists and is the "gem" repo and is the "master" branch then ...
         if [ -d "${GEM_DEB_MONOTONE}/${BUILD_UBUVER}/binary" ]; then
-            if [ "git://$repo_id" == "$GEM_GIT_REPO" -a "$branch" == "master" ]; then
+            if [ "git://$repo_id" == "$GEM_GIT_REPO" -a "$branch" == "${GEM_MASTER_BRANCH}" ]; then
                 cp ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.deb ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}-master_*.deb \
                    ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}-worker_*.deb ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.changes \
-                    ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.dsc ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.tar.gz \
+                    ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.dsc ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.tar.?z \
                     "${GEM_DEB_MONOTONE}/${BUILD_UBUVER}/binary"
+                cp ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.buildinfo \
+                    "${GEM_DEB_MONOTONE}/${BUILD_UBUVER}/binary" || true
                 PKG_COMMIT="$(git log --pretty='format:%h' -1)"
                 egrep '_COMMIT=|_PKG=' _jenkins_deps_info \
                   | sed 's/\(^.*=[0-9a-f]\{7\}\).*/\1/g' \
@@ -1099,8 +1103,10 @@ EOF
 
         cp ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.deb ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}-master_*.deb \
            ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}-worker_*.deb ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.changes \
-            ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.dsc ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.tar.gz \
+            ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.dsc ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.tar.?z \
             ${GEM_BUILD_ROOT}/Packages* ${GEM_BUILD_ROOT}/Sources* ${GEM_BUILD_ROOT}/Release* "${repo_tmpdir}"
+        cp ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.buildinfo \
+            "${repo_tmpdir}" || true
         if [ "${GEM_DEB_REPO}/${BUILD_UBUVER}/${GEM_DEB_SERIE}/${GEM_DEB_PACKAGE}.${commit}" ]; then
             rm -rf "${GEM_DEB_REPO}/${BUILD_UBUVER}/${GEM_DEB_SERIE}/${GEM_DEB_PACKAGE}.${commit}"
         fi
@@ -1119,7 +1125,7 @@ BUILD_BINARIES=0
 BUILD_REPOSITORY=0
 BUILD_DEVEL=0
 BUILD_UNSIGN=0
-BUILD_UBUVER_REFERENCE="precise"
+BUILD_UBUVER_REFERENCE="xenial"
 BUILD_UBUVER="$BUILD_UBUVER_REFERENCE"
 BUILD_ON_LXC=0
 BUILD_FLAGS=""
@@ -1139,7 +1145,7 @@ while [ $# -gt 0 ]; do
             ;;
         -s|--serie)
             BUILD_UBUVER="$2"
-            if [ "$BUILD_UBUVER" != "precise" -a "$BUILD_UBUVER" != "trusty"  -a "$BUILD_UBUVER" != "xenial" ]; then
+            if [ "$BUILD_UBUVER" != "trusty"  -a "$BUILD_UBUVER" != "xenial" -a "$BUILD_UBUVER" != "bionic" ]; then
                 echo
                 echo "ERROR: ubuntu version '$BUILD_UBUVER' not supported"
                 echo
@@ -1347,8 +1353,10 @@ cd -
 # if the monotone directory exists and is the "gem" repo and is the "master" branch then ...
 if [ -d "${GEM_DEB_MONOTONE}/${BUILD_UBUVER}/source" -a $BUILD_SOURCES_COPY -eq 1 ]; then
     cp ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.changes \
-        ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.dsc ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.tar.gz \
+        ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.dsc ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.tar.?z \
         "${GEM_DEB_MONOTONE}/${BUILD_UBUVER}/source"
+    cp ${GEM_BUILD_ROOT}/${GEM_DEB_PACKAGE}_*.buildinfo \
+        "${GEM_DEB_MONOTONE}/${BUILD_UBUVER}/source" || true
 fi
 
 if [ $BUILD_DEVEL -ne 1 ]; then
