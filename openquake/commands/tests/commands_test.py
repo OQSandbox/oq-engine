@@ -221,8 +221,10 @@ class RunShowExportTestCase(unittest.TestCase):
 
     def test_show_attrs(self):
         with Print.patch() as p:
-            show_attrs('poes', self.calc_id)
-        self.assertEqual('nbytes 48', str(p))
+            show_attrs('sitecol', self.calc_id)
+        self.assertEqual(
+            '__pyclass__ openquake.hazardlib.site.SiteCollection\nnbytes 54',
+            str(p))
 
     def test_export_calc(self):
         tempdir = tempfile.mkdtemp()
@@ -371,6 +373,10 @@ class SourceModelShapefileConverterTestCase(unittest.TestCase):
                     for f in os.listdir(self.OUTDIR)]
         from_shapefile(os.path.join(self.OUTDIR, 'smc'), shpfiles, True)
 
+    def tearDown(self):
+        # comment out the line below if you need to debug the test
+        shutil.rmtree(self.OUTDIR)
+
 
 class DbTestCase(unittest.TestCase):
     def test_db(self):
@@ -401,7 +407,4 @@ class EngineRunJobTestCase(unittest.TestCase):
         # to a wrong refactoring of the safely_call function)
         with read(job_id) as dstore:
             perf = view('performance', dstore)
-            self.assertIn('total runtime', perf)
-            self.assertIn('total compute_ruptures', perf)
             self.assertIn('total event_based_risk', perf)
-            self.assertIn('total build_curves_maps', perf)

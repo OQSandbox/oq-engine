@@ -101,15 +101,15 @@ class ClassicalRiskCalculator(base.RiskCalculator):
             haz_sitecol = readinput.get_site_collection(oq)
             self.datastore['poes/grp-00'] = readinput.pmap
             self.save_params()
-            self.read_exposure(haz_sitecol)  # define .assets_by_site
             self.load_riskmodel()
+            self.read_exposure(haz_sitecol)  # define .assets_by_site
             self.datastore['sitecol'] = self.sitecol
             self.datastore['assetcol'] = self.assetcol
             self.datastore['csm_info'] = fake = source.CompositionInfo.fake()
             self.rlzs_assoc = fake.get_rlzs_assoc()
             self.before_export()  # save 'realizations' dataset
         else:  # compute hazard or read it from the datastore
-            super(ClassicalRiskCalculator, self).pre_execute()
+            super().pre_execute()
             if 'poes' not in self.datastore:  # when building short report
                 return
         rlzs = self.datastore['csm_info'].rlzs

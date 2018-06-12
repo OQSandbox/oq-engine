@@ -27,9 +27,13 @@ import configparser
 import collections
 import numpy
 
-from openquake.baselib.general import AccumDict, DictArray, deprecated
+from openquake.baselib.general import (
+    AccumDict, DictArray, deprecated, random_filter)
 from openquake.baselib.python3compat import decode, zip
 from openquake.baselib.node import Node
+from openquake.hazardlib.const import StdDev
+from openquake.hazardlib.source.base import BaseSeismicSource
+from openquake.hazardlib.calc.gmf import CorrelationButNoInterIntraStdDevs
 from openquake.hazardlib import (
     geo, site, imt, valid, sourceconverter, nrml, InvalidFile)
 from openquake.hazardlib.probability_map import ProbabilityMap
@@ -56,6 +60,22 @@ class DuplicatedPoint(Exception):
     """
     Raised when reading a CSV file with duplicated (lon, lat) pairs
     """
+
+
+class LargeExposureGrid(Exception):
+    msg = '''
+    The point of automatic gridding of the exposure is to reduce the hazard
+    mesh, however you are increasing it from %d points to %d points. Or your
+    region_grid_spacing (%d km) is too small or the bounding box of your
+    exposure is too large. Currently you have longitudes in the range [%d, %d]
+    and latitudes in the range [%d, %d], please plot your assets and check.'''
+
+    def __init__(self, exposure_mesh, hazard_mesh, spacing):
+        l1 = len(exposure_mesh)
+        l2 = len(hazard_mesh)
+        lon1, lon2 = exposure_mesh.lons.min(), exposure_mesh.lons.max()
+        lat1, lat2 = exposure_mesh.lats.min(), exposure_mesh.lats.max()
+        self.args = [self.msg % (l2, l1, spacing, lon1, lon2, lat1, lat2)]
 
 
 def collect_files(dirpath, cond=lambda fullname: True):
@@ -116,7 +136,9 @@ def get_params(job_inis, **kw):
     :returns:
         A dictionary of parameters
     """
+    input_zip = None
     if len(job_inis) == 1 and job_inis[0].endswith('.zip'):
+        input_zip = job_inis[0]
         job_inis = extract_from_zip(
             job_inis[0], ['job_hazard.ini', 'job_haz.ini',
                           'job.ini', 'job_risk.ini'])
@@ -132,6 +154,8 @@ def get_params(job_inis, **kw):
     job_ini = os.path.abspath(job_inis[0])
     base_path = decode(os.path.dirname(job_ini))
     params = dict(base_path=base_path, inputs={'job_ini': job_ini})
+    if input_zip:
+        params['inputs']['input_zip'] = os.path.abspath(input_zip)
 
     for sect in cp.sections():
         _update(params, cp.items(sect), base_path)
@@ -202,6 +226,7 @@ def get_oqparam(job_ini, pkg=None, calculators=None, hc_id=None, validate=1):
     oqparam = OqParam(**job_ini)
     if validate:
         oqparam.validate()
+    BaseSeismicSource.min_mag = oqparam.minimum_magnitude
     return oqparam
 
 
@@ -213,6 +238,9 @@ pmap = None  # set as side effect when the user reads hazard_curves from a file
 exposure = None  # set as side effect when the user reads the site mesh
 # this hack is necessary, otherwise we would have to parse the exposure twice
 
+gmfs, eids = None, None  # set as a sided effect when reading gmfs.xml
+# this hack is necessary, otherwise we would have to parse the file twice
+
 
 def get_mesh(oqparam):
     """
@@ -222,7 +250,7 @@ def get_mesh(oqparam):
     :param oqparam:
         an :class:`openquake.commonlib.oqvalidation.OqParam` instance
     """
-    global pmap, exposure
+    global pmap, exposure, gmfs, eids
     if 'exposure' in oqparam.inputs and exposure is None:
         # read it only once
         exposure = get_exposure(oqparam)
@@ -258,6 +286,9 @@ def get_mesh(oqparam):
         else:
             raise NotImplementedError('Reading from %s' % fname)
         return mesh
+    elif 'gmfs' in oqparam.inputs:
+        eids, gmfs = _get_gmfs(oqparam)  # sets oqparam.sites
+        return geo.Mesh.from_coords(oqparam.sites)
     elif oqparam.region and oqparam.region_grid_spacing:
         poly = geo.Polygon.from_wkt(oqparam.region)
         try:
@@ -320,21 +351,27 @@ def get_site_collection(oqparam):
             depth = None
         if mesh is None:
             # extract the site collection directly from the site model
-            return site.SiteCollection.from_points(
+            sitecol = site.SiteCollection.from_points(
                 sm['lon'], sm['lat'], depth, sm)
-        # associate the site parameters to the mesh
+        else:
+            # associate the site parameters to the mesh
+            sitecol = site.SiteCollection.from_points(
+                mesh.lons, mesh.lats, mesh.depths)
+            sc, params = geo.utils.assoc(
+                sm, sitecol, oqparam.max_site_model_distance, 'warn')
+            for sid, param in zip(sc.sids, params):
+                for name in site_model_dt.names[2:]:  # except lon, lat
+                    sitecol.array[sid][name] = param[name]
+    else:  # use the default site params
         sitecol = site.SiteCollection.from_points(
-            mesh.lons, mesh.lats, mesh.depths)
-        sc, params = geo.utils.assoc(
-            sm, sitecol, oqparam.max_site_model_distance, 'warn')
-        for sid, param in zip(sc.sids, params):
-            for name in site_model_dt.names[2:]:  # all names except lon, lat
-                sitecol.array[sid][name] = param[name]
-        return sitecol
-
-    # else use the default site params
-    sitecol = site.SiteCollection.from_points(
-        mesh.lons, mesh.lats, mesh.depths, oqparam)
+            mesh.lons, mesh.lats, mesh.depths, oqparam)
+    ss = os.environ.get('OQ_SAMPLE_SITES')
+    if ss:
+        # debugging tip to reduce the size of a calculation
+        # OQ_SAMPLE_SITES=.1 oq engine --run job.ini
+        # will run a computation with 10 times less sites
+        sitecol.array = numpy.array(random_filter(sitecol.array, float(ss)))
+        sitecol.make_complete()
     return sitecol
 
 
@@ -354,6 +391,12 @@ def get_gsim_lt(oqparam, trts=['*']):
     gsim_file = os.path.join(
         oqparam.base_path, oqparam.inputs['gsim_logic_tree'])
     gsim_lt = logictree.GsimLogicTree(gsim_file, trts)
+    gmfcorr = oqparam.get_correl_model()
+    for trt, gsims in gsim_lt.values.items():
+        for gsim in gsims:
+            if gmfcorr and (gsim.DEFINED_FOR_STANDARD_DEVIATION_TYPES ==
+                            set([StdDev.TOTAL])):
+                raise CorrelationButNoInterIntraStdDevs(gmfcorr, gsim)
     return gsim_lt
 
 
@@ -442,6 +485,8 @@ def get_source_models(oqparam, gsim_lt, source_model_lt, in_memory=True):
         oqparam.width_of_mfd_bin,
         oqparam.area_source_discretization)
     psr = nrml.SourceModelParser(converter)
+    if oqparam.calculation_mode.startswith('ucerf'):
+        [grp] = nrml.to_python(oqparam.inputs["source_model"], converter)
 
     # consider only the effective realizations
     smlt_dir = os.path.dirname(source_model_lt.filename)
@@ -449,7 +494,12 @@ def get_source_models(oqparam, gsim_lt, source_model_lt, in_memory=True):
         src_groups = []
         for name in sm.names.split():
             fname = os.path.abspath(os.path.join(smlt_dir, name))
-            if in_memory:
+            if oqparam.calculation_mode.startswith('ucerf'):
+                sg = copy.copy(grp)
+                sg.id = sm.ordinal
+                sg.sources = [sg[0].new(sm.ordinal, sm.names)]  # one source
+                src_groups.append(sg)
+            elif in_memory:
                 apply_unc = source_model_lt.make_apply_uncertainties(sm.path)
                 logging.info('Reading %s', fname)
                 src_groups.extend(psr.parse_src_groups(fname, apply_unc))
@@ -575,14 +625,6 @@ def get_risk_model(oqparam):
     return riskinput.CompositeRiskModel(oqparam, rmdict, retro)
 
 
-def get_cost_calculator(oqparam):
-    """
-    Read the first lines of the exposure file and infers the cost calculator
-    """
-    exposure = asset._get_exposure(oqparam.inputs['exposure'], stop='assets')
-    return exposure[0].cost_calculator
-
-
 def get_exposure(oqparam):
     """
     Read the full exposure in memory and build a list of
@@ -601,22 +643,35 @@ def get_exposure(oqparam):
     return exposure
 
 
-def get_sitecol_assetcol(oqparam, haz_sitecol):
+def get_sitecol_assetcol(oqparam, haz_sitecol=None, cost_types=()):
     """
     :param oqparam: calculation parameters
     :param haz_sitecol: the hazard site collection
+    :param cost_types: the expected cost types
     :returns: (site collection, asset collection) instances
     """
     global exposure
     if exposure is None:
         # haz_sitecol not extracted from the exposure
         exposure = get_exposure(oqparam)
+    if haz_sitecol is None:
+        haz_sitecol = get_site_collection(oqparam)
+    missing = set(cost_types) - set(exposure.cost_types['name']) - set(
+        ['occupants'])  # TODO: remove occupants and fragility special cases
+    if missing and not oqparam.calculation_mode.endswith('damage'):
+        expo = oqparam.inputs.get('exposure', '')
+        raise InvalidFile(
+            'Expected cost types %s but the exposure %r contains %s' % (
+                cost_types, expo, exposure.cost_types['name']))
     if oqparam.region_grid_spacing and not oqparam.region:
         # extract the hazard grid from the exposure
-        exposure.mesh = exposure.mesh.get_convex_hull().dilate(
-            oqparam.region_grid_spacing).discretize(
-                oqparam.region_grid_spacing)
-        haz_sitecol = get_site_collection(oqparam)
+        poly = exposure.mesh.get_convex_hull()
+        exposure.mesh = poly.dilate(oqparam.region_grid_spacing).discretize(
+            oqparam.region_grid_spacing)
+        if len(exposure.mesh) > len(haz_sitecol):
+            raise LargeExposureGrid(exposure.mesh, haz_sitecol.mesh,
+                                    oqparam.region_grid_spacing)
+        haz_sitecol = get_site_collection(oqparam)  # reload on new mesh
         haz_distance = oqparam.region_grid_spacing
         if haz_distance != oqparam.asset_hazard_distance:
             logging.info('Using asset_hazard_distance=%d km instead of %d km',
@@ -699,14 +754,10 @@ def get_mesh_csvdata(csvfile, imts, num_values, validvalues):
     return mesh, {imt: numpy.array(lst) for imt, lst in data.items()}
 
 
-def get_gmfs(oqparam):
-    """
-    :param oqparam:
-        an :class:`openquake.commonlib.oqvalidation.OqParam` instance
-    :returns:
-        sitecol, eids, gmf array of shape (R, N, E, M)
-    """
+def _get_gmfs(oqparam):
     M = len(oqparam.imtls)
+    assert M, ('oqparam.imtls is empty, did you call '
+               'oqparam.set_risk_imtls(get_risk_models(oqparam))?')
     fname = oqparam.inputs['gmfs']
     if fname.endswith('.csv'):
         array = writers.read_composite_array(fname).array
@@ -828,7 +879,11 @@ def _extract_eids_sitecounts(gmfset):
         eids.add(gmf['ruptureId'])
         for node in gmf:
             counter[node['lon'], node['lat']] += 1
-    return numpy.array(sorted(eids), numpy.uint64), counter
+    eids = numpy.array(sorted(eids), numpy.uint64)
+    if (eids != numpy.arange(len(eids), dtype=numpy.uint64)).any():
+        raise ValueError('There are ruptureIds in the gmfs_file not in the '
+                         'range [0, %d)' % len(eids))
+    return eids, counter
 
 
 @deprecated('Use the .csv format for the GMFs instead')
@@ -839,7 +894,7 @@ def get_scenario_from_nrml(oqparam, fname):
     :param fname:
         the NRML files containing the GMFs
     :returns:
-        a triple (sitecol, eids, gmf array)
+        a pair (eids, gmf array)
     """
     if not oqparam.imtls:
         oqparam.set_risk_imtls(get_risk_models(oqparam))

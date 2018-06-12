@@ -73,7 +73,6 @@ class OqParam(valid.ParamSet):
     ground_motion_correlation_model = valid.Param(
         valid.NoneOr(valid.Choice(*GROUND_MOTION_CORRELATION_MODELS)), None)
     ground_motion_correlation_params = valid.Param(valid.dictionary)
-    ground_motion_fields = valid.Param(valid.boolean, False)
     gsim = valid.Param(valid.gsim, valid.FromFile())
     hazard_calculation_id = valid.Param(valid.NoneOr(valid.positiveint), None)
     hazard_curves_from_gmfs = valid.Param(valid.boolean, False)
@@ -100,6 +99,7 @@ class OqParam(valid.ParamSet):
     max_loss_curves = valid.Param(valid.boolean, False)
     mean_loss_curves = valid.Param(valid.boolean, True)
     minimum_intensity = valid.Param(valid.floatdict, {})  # IMT -> minIML
+    minimum_magnitude = valid.Param(valid.positivefloat, 0)
     number_of_ground_motion_fields = valid.Param(valid.positiveint)
     number_of_logic_tree_samples = valid.Param(valid.positiveint, 0)
     num_epsilon_bins = valid.Param(valid.positiveint)
@@ -161,7 +161,7 @@ class OqParam(valid.ParamSet):
             return self._file_type
 
     def __init__(self, **names_vals):
-        super(OqParam, self).__init__(**names_vals)
+        super().__init__(**names_vals)
         job_ini = self.inputs['job_ini']
         if 'calculation_mode' not in names_vals:
             raise InvalidFile('Missing calculation_mode in %s' % job_ini)
@@ -194,7 +194,7 @@ class OqParam(valid.ParamSet):
         self._file_type, self._risk_files = get_risk_files(self.inputs)
 
         self.check_source_model()
-        if self.hazard_precomputed():
+        if self.hazard_precomputed() and self.job_type == 'risk':
             self.check_missing('site_model', 'warn')
             self.check_missing('gsim_logic_tree', 'warn')
             self.check_missing('source_model_logic_tree', 'warn')
@@ -255,20 +255,19 @@ class OqParam(valid.ParamSet):
                     'for classical_damage calculations' % job_ini)
 
         # checks for event_based_risk
-        if (self.calculation_mode == 'event_based_risk'
-                and self.asset_correlation not in (0, 1)):
+        if (self.calculation_mode == 'event_based_risk' and
+                self.asset_correlation not in (0, 1)):
             raise ValueError('asset_correlation != {0, 1} is no longer'
                              ' supported')
-        elif (self.calculation_mode == 'event_based_risk'
-              and self.conditional_loss_poes and not self.asset_loss_table):
-            raise InvalidFile(
-                '%s: asset_loss_table is not set, probably you want to remove'
-                ' conditional_loss_poes' % job_ini)
 
         # check for GMFs from file
         if (self.inputs.get('gmfs', '').endswith('.csv') and not self.sites and
                 'sites' not in self.inputs):
             raise InvalidFile('%s: You forgot sites|sites_csv' % job_ini)
+        elif (self.inputs.get('gmfs', '').endswith('.xml') and
+                'sites' in self.inputs):
+            raise InvalidFile('%s: You cannot have both sites_csv and '
+                              'gmfs_file' % job_ini)
 
         # checks for ucerf
         if 'ucerf' in self.calculation_mode:
@@ -345,12 +344,13 @@ class OqParam(valid.ParamSet):
         Return the cost types of the computation (including `occupants`
         if it is there) in order.
         """
-        costtypes = sorted(self.risk_files)
+        # rt has the form 'vulnerability/structural', 'fragility/...', ...
+        costtypes = sorted(rt.rsplit('/')[1] for rt in self.risk_files)
         if not costtypes and self.hazard_calculation_id:
             with datastore.read(self.hazard_calculation_id) as ds:
                 parent = ds['oqparam']
             self._file_type, self._risk_files = get_risk_files(parent.inputs)
-            costtypes = sorted(self.risk_files)
+            costtypes = sorted(rt.rsplit('/')[1] for rt in self.risk_files)
         return costtypes
 
     def set_risk_imtls(self, risk_models):
@@ -364,7 +364,7 @@ class OqParam(valid.ParamSet):
         # in that case we merge the IMLs
         imtls = {}
         for taxonomy, risk_functions in risk_models.items():
-            for loss_type, rf in risk_functions.items():
+            for risk_type, rf in risk_functions.items():
                 imt = rf.imt
                 from_string(imt)  # make sure it is a valid IMT
                 imls = list(rf.imls)
