@@ -557,7 +557,7 @@ def calc_results(request, calc_id):
         url = urlparse.urljoin(base_url, 'v1/calc/result/%d' % result.id)
         datum = dict(
             id=result.id, name=result.display_name, type=rtype,
-            outtypes=outtypes, url=url)
+            outtypes=outtypes, url=url, size_mb=result.size_mb)
         response_data.append(datum)
 
     return HttpResponse(content=json.dumps(response_data))
@@ -642,6 +642,7 @@ def get_result(request, result_id):
     response = FileResponse(stream, content_type=content_type)
     response['Content-Disposition'] = (
         'attachment; filename=%s' % os.path.basename(fname))
+    response['Content-Length'] = str(os.path.getsize(exported))
     return response
 
 
@@ -695,6 +696,7 @@ def extract(request, calc_id, what):
     response = FileResponse(stream, content_type='application/octet-stream')
     response['Content-Disposition'] = (
         'attachment; filename=%s' % os.path.basename(fname))
+    response['Content-Length'] = str(os.path.getsize(fname))
     return response
 
 
@@ -723,6 +725,7 @@ def get_datastore(request, job_id):
         FileWrapper(open(fname, 'rb')), content_type=HDF5)
     response['Content-Disposition'] = (
         'attachment; filename=%s' % os.path.basename(fname))
+    response['Content-Length'] = str(os.path.getsize(fname))
     return response
 
 
