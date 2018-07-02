@@ -21,6 +21,7 @@ by IMT type
 """
 
 import re
+from collections import OrderedDict
 from openquake.hazardlib.gsim import get_available_gsims
 from openquake.hazardlib.gsim.base import CoeffsTable, GMPE
 from openquake.hazardlib import const
@@ -62,15 +63,18 @@ class WrapperGMPE(GMPE):
         Instantiate with a dictionary of GMPEs organised by IMT. In this case 
         """
         super().__init__()
-        self.gmpes = {}
+        self.gmpes = OrderedDict([])
         if isinstance(gmpes_by_imt, str):
-            # Convert string into dictionary
             gmpes_by_imt = self._gmpe_str_to_dict(gmpes_by_imt)
-
         for imt, gmpe in list(gmpes_by_imt.items()):
             # IMT should be a string
             gmpe_imt = from_string(imt)
-            self.gmpes[gmpe_imt] = GSIM_LIST[gmpe]()
+            if gmpe.startswith("GMPETable"):
+                gmpe_table = dict([
+                    re.search(r"\((.*)\)", gmpe_str).group(1).split("=")])
+                self.gmpes[gmpe_imt] = GMPETable(**gmpe_table)
+            else:
+                self.gmpes[gmpe_imt] = GSIM_LIST[gmpe]()
             if not gmpe_imt.__class__ in\
                 self.gmpes[gmpe_imt].DEFINED_FOR_INTENSITY_MEASURE_TYPES:
                 raise ValueError("IMT %s not supported by %s" % (imt, gmpe))
@@ -92,13 +96,22 @@ class WrapperGMPE(GMPE):
     @staticmethod
     def _gmpe_str_to_dict(gmpes_by_imt):
         """
+        Converts a string to a dictionary organised by IMT and GMPE
         """
         content = re.search(r"\{(.*)\}", gmpes_by_imt).group(1)
         gmpe_dict = []
         for keyval in content.split(","):
             imt_str, gmpe_str = keyval.split(":")
             gmpe_dict.append((imt_str.strip(), gmpe_str.strip()))
-        return dict(gmpe_dict)
+        return OrderedDict(gmpe_dict)
+
+    @classmethod
+    def from_string(cls, gmpes_by_imt):
+        """
+        Instantiated the GMPE from a string
+        """
+        gmpes_by_imt = cls._gmpe_str_to_dict(gmpes_by_imt)
+        return cls(gmpes_by_imt=gmpes_by_imt)
 
 
     def get_mean_and_stddevs(self, sctx, rctx, dctx, imt, stddev_types):

@@ -20,10 +20,13 @@
 import numpy as np
 from scipy.interpolate import interp1d
 from collections import OrderedDict
-from openquake.hazardlib.gdem.base import GDEM, GSIMFComputer
+from openquake.hazardlib.gdem.base import GDEM
 from openquake.hazardlib import const
 from openquake.hazardlib.imt import (PGDfSettle, PGDfLatSpread, PGDfSlope, PGA,
                                      PGV, IA)
+
+
+CM2M = -np.log(100.0)
 
 
 class SlopeDisplacementScalar(GDEM):
@@ -55,7 +58,6 @@ class SlopeDisplacementScalar(GDEM):
             means.append(gsimtls[imt]["mean"])
             stddevs.append(gsimtls[imt][const.StdDev.TOTAL])
         return means, stddevs
-        #return [gsimtls["PGA"]["mean"], gsimtls["PGA"][const.StdDev.TOTAL]]
 
     def get_probability_failure(self, sctx, rctx, dctx, gsimtls=None):
         """
@@ -69,7 +71,7 @@ class SlopeDisplacementScalar(GDEM):
         p_failure = np.zeros_like(properties["a_c"])
         for j, epsilon in enumerate(self.epsilons):
             # Get the PGA corresponding to a given epislon
-            pga = np.exp(gmv_mean + epsilon * gmv_sigma)
+            gmv = np.exp(gmv_mean[0] + epsilon * gmv_sigma[0])
             idx = gmv >= properties["a_c"]
             # Where PGA exceeds the yield acceleration multiply the
             # epsilon probability by the map area
@@ -106,29 +108,22 @@ class SlopeDisplacementScalar(GDEM):
 
     def get_displacement(self, sctx, rctx, dctx, gmv, properties, idx):
         """
-        Returns the expected displacement and standard deviation of Jibson
-        (2007) equation (6)
+        Returns the expected displacement and standard deviation of
+        displacement
         """
         raise NotImplementedError("Not implemented for base class")
-#        ac_ratio = properties["a_c"][idx] / gmv[idx]
-#        mean = 0.215 + np.log(((1.0 - ac_ratio) ** 2.341) *
-#                              (ac_ratio ** -1.438))
-#        stddevs = 0.51 * np.ones_like(ac_ratio)
-#        return mean, [stddevs]
 
-    def _get_gmv_field(self, gmfs):
+    def _get_gmv_field_location(self, gmfs):
         """
         Get the ground motion values needed for the field - in this case PGA
         """
-        
-        # Get intensity measure types
-        gmpe_set = list(self.gmpe_set)
-        gmvs = []
-        for imt in IMT_ORDER:
-            gmvs.append(gmpe_set.index(imt))
-        return gmvs
-            
-        #return [gmfs[list(self.gmpe_set).index("PGA")]]
+        req_imt = from_string(self.IMT_ORDER[0])
+        if not req_imt in self.imts:
+            raise ValueError("%s requires calculation of %s "
+                             "but not found in imts" %
+                             (self.__class__.__name__, self.IMT_ORDER[0]))
+
+        return [self.imts.index(req_imt)]
 
     def get_displacement_field(self, rupture, sitecol, cmaker, num_events=1,
                                truncation_level=None, correlation_model=None):
@@ -136,15 +131,16 @@ class SlopeDisplacementScalar(GDEM):
 
         """
         # Gets the ground motion fields
-        gmf_computer = GmfComputer(rupture, sitecol, self.IMT_ORDER,
+        gmf_loc = self._get_gmv_field_location()
+        gmf_computer = GmfComputer(rupture, sitecol,
+                                   [str(imt) for imt in self.imts],
                                    cmaker, truncation_level,
                                    correlation_model)
         gmfs = gmf_computer.compute(self.gmpe, num_events, seed=None)
         # Get the ground motion values field
-        gmv = self._get_gmv_field(gmfs)
+        gmvs = gmfs[gmf_loc[0]]
         properties = self._setup_properties(gmf_computer.ctx[0],
                                             gmf_computer.ctx[1])
-
         
         n = properties["a_c"].shape
         properties["a_c"] = np.tile(
@@ -164,11 +160,13 @@ class SlopeDisplacementScalar(GDEM):
         return displacement, gmfs
         
 
-
 class Jibson2007PGA(SlopeDisplacementScalar):
     """
     Jibson et al., 2007 Eq. 6
     """
+    DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
+    IMT_ORDER = ["PGA",]
+    
     def get_displacement(self, sctx, rctx, dctx, gmv, properties, idx):
         """
         Returns the expected displacement and standard deviation of Jibson
@@ -178,13 +176,17 @@ class Jibson2007PGA(SlopeDisplacementScalar):
         mean = 0.215 + np.log(((1.0 - ac_ratio) ** 2.341) *
                               (ac_ratio ** -1.438))
         stddevs = 0.51 * np.ones_like(ac_ratio)
-        return mean, [stddevs]
+        # Convert mean from cm to m
+        return mean + CM2M, [stddevs]
 
 
 class Jibson2007PGAMag(SlopeDisplacementScalar):
     """
     Jibson et al., 2007 Eq. 7
     """
+    DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
+    IMT_ORDER = ["PGA",]
+
     def get_displacement(self, sctx, rctx, dctx, gmv, properties, idx):
         """
         Returns the expected displacement and standard deviation of Jibson
@@ -194,15 +196,16 @@ class Jibson2007PGAMag(SlopeDisplacementScalar):
         mean = -2.710 + np.log(((1.0 - ac_ratio) ** 2.335) *
                               (ac_ratio ** -1.478)) + 0.424 * rctx.mag
         stddevs = 0.454 * np.ones_like(ac_ratio)
-        return mean, [stddevs]
+        # Convert mean from cm to m
+        return mean + CM2M, [stddevs]
 
 
 class Jibson2007Ia(SlopeDisplacementScalar):
     """
     Jibson et al., 2007 Eq. 7
     """
-    DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((Ia,))
-    IMT_ORDER = ["Ia",]
+    DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((IA,))
+    IMT_ORDER = ["IA",]
 
     def get_displacement(self, sctx, rctx, dctx, gmv, properties, idx):
         """
@@ -210,9 +213,10 @@ class Jibson2007Ia(SlopeDisplacementScalar):
         (2007) equation (7)
         """
         mean = 2.401 * np.log(gmv[idx]) -\
-            3.481 * np.log(properties["a_c"][idx] - 3.230
-        stddevs = 0.656 * np.ones_like(properties["a_c"][idx])
-        return mean, [stddevs]
+            3.481 * np.log(properties["a_c"][idx]) - 3.230
+        stddevs = 0.616 * np.ones_like(properties["a_c"][idx])
+        # Convert mean from cm to m
+        return mean + CM2M, [stddevs]
 
 
 class FotopoulouPitilakis2015PGV(SlopeDisplacementScalar):
@@ -222,23 +226,24 @@ class FotopoulouPitilakis2015PGV(SlopeDisplacementScalar):
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGV,))
     IMT_ORDER = ["PGV",]
 
-
     def get_displacement(self, sctx, rctx, dctx, gmv, properties, idx):
         """
         Returns the expected displacement and standard deviation of Fotopoulou
         & Pitilakis (2015) equation 8
         """
         a_c = properties["a_c"][idx]
-        mean = -9.891 + 1.873 * np.log(gmv[idx]) -5.964 * a_c +\
+        mean = -9.891 + 1.873 * np.log(gmv[idx]) - 5.964 * a_c +\
             0.285 * rctx.mag
         stddevs = 0.65 * np.ones_like(a_c)
-        return mean,[stddevs]
+        return mean, [stddevs]
 
 
 class FotopoulouPitilakis2015PGA(SlopeDisplacementScalar):
     """
-
     """
+    DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
+    IMT_ORDER = ["PGA",]
+
     def get_displacement(self, sctx, rctx, dctx, gmv, properties, idx):
         """
         Returns the expected displacement and standard deviation of Fotopoulou
@@ -248,12 +253,15 @@ class FotopoulouPitilakis2015PGA(SlopeDisplacementScalar):
         mean = -2.965 + 2.127 * np.log(gmv[idx]) - 6.583 * a_c +\
             0.535 * rctx.mag
         stddevs = 0.72 * np.ones_like(a_c)
-        return mean,[stddevs]
+        return mean, [stddevs]
 
 
 class FotopoulouPitilakis2015Ky(SlopeDisplacementScalar):
     """
     """
+    DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
+    INT_ORDER = ["PGA",]
+
     def get_displacement(self, sctx, rctx, dctx, gmv, properties, idx):
         """
         Returns the expected displacement and standard deviation of Fotopoulou
@@ -263,12 +271,15 @@ class FotopoulouPitilakis2015Ky(SlopeDisplacementScalar):
         mean = -10.246 - 2.165 * np.log(a_c / gmv[idx]) + 7.844 * a_c +\
             0.654 * rctx.mag
         stddevs = 0.75 * np.ones_like(a_c)
-        return mean,[stddevs]
+        return mean, [stddevs]
 
 
 class RathjeSaygili2009PGA(SlopeDisplacementScalar):
     """
     """
+    DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
+    INT_ORDER = ["PGA",]
+
     def get_displacement(self, sctx, rctx, dctx, gmv, properties, idx):
         """
         Returns the expected displacement and standard deviation of Rathje &
@@ -281,6 +292,6 @@ class RathjeSaygili2009PGA(SlopeDisplacementScalar):
             0.72 * np.log(gmv[idx]) + 0.89 * (rctx.mag - 6.0)
     
         stddevs = 0.732 + 0.789 * ac_ratio - 0.539 * (ac_ratio ** 2.)
-        return mean,[stddevs]
-
+        # Convert mean from cm to m
+        return mean + CM2M, [stddevs]
 

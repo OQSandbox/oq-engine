@@ -75,15 +75,12 @@ class GDEM(GMPE):
     REQUIRES_DISTANCES = set(())
     REQUIRES_RUPTURE_PARAMETERS = set(())
     REQUIRES_SITES_PARAMETERS = set(())
-    # Add the IMT order - in cases where multiple IMTs are considered this
-    # defined the order in which they are retrieved
-    IMT_ORDER = []
 
     def __init__(self, gmpe, truncation=3.0, nsample=1000):
         super().__init__()
         assert isinstance(gmpe, WrapperGMPE)
         self.gmpe = gmpe
-        self.imts = [from_string(imt) for imt in self.IMT_ORDER]
+        self.imts = list(self.gmpe.gmpes)
         for imt in self.imts:
             if not imt.__class__ in\
                 self.gmpe.DEFINED_FOR_INTENSITY_MEASURE_TYPES:

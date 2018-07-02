@@ -217,6 +217,7 @@ class ContextMaker(object):
     def _make_pnes(self, rupture, sctx, dctx, imtls, trunclevel):
         pne_array = numpy.zeros(
             (len(sctx.sids), len(imtls.array), len(self.gsims)))
+        print(len(sctx.sids), len(imtls.array), len(self.gsims))
         for i, gsim in enumerate(self.gsims):
             dctx_ = dctx.roundup(gsim.minimum_distance)
             pnos = []  # list of arrays nsites x nlevels
@@ -275,6 +276,24 @@ class ContextMaker(object):
             acc['lons'].append(closest_points.lons)
             acc['lats'].append(closest_points.lats)
         return acc
+
+
+class GeotechContextMaker(ContextMaker):
+    # NB: it is important for this to be fast since it is inside an inner loop
+    def _make_pnes(self, rupture, sctx, dctx, imtls, trunclevel):
+        pne_array = numpy.zeros(
+            (len(sctx.sids), len(imtls.array), len(self.gsims)))
+        for i, gsim in enumerate(self.gsims):
+            dctx_ = dctx.roundup(gsim.minimum_distance)
+            # For the Geotech calculators the outputs are a list
+            # of arrays ordered in terms of the imt order in imtls
+            poes = gsim.get_poes(sctx, rupture, dctx_,
+                                 imtls, trunclevel)
+            pnos = []
+            for poe in poes:
+                pnos.append(rupture.get_probability_no_exceedance(poe))
+            pne_array[:, :, i] = numpy.concatenate(pnos, axis=1)
+        return pne_array
 
 
 class BaseContext(metaclass=abc.ABCMeta):

@@ -52,7 +52,7 @@ class Site(object):
         HAZUS Liquefaction susceptibility classes (as integer in range 0 - 5)
     :param landsliding_susceptibility:
         HAZUS Landsliding susceptibility class (as integer in range 0 - 10)
-    :param water_depth:
+    :param dw:
         Depth to water table (m)
     :param yield_acceleration:
         Yield acceleration (g) for landsliding
@@ -82,7 +82,7 @@ class Site(object):
 
     def __init__(self, location, vs30, vs30measured, z1pt0, z2pt5,
                  backarc=False, liquefaction_susceptibility=0,
-                 landsliding_susceptibility=0, water_depth=10.,
+                 landsliding_susceptibility=0, dw=10.,
                  yield_acceleration=0.0, cti=0.0, dc=0.0, dr=0.0, dwb=0.0,
                  hwater=0.0, precip=0.0):
         if not vs30 > 0:
@@ -100,7 +100,7 @@ class Site(object):
         # Geotech parameters
         self.liquefaction_susceptibility = liquefaction_susceptibility
         self.landsliding_susceptibility = landsliding_susceptibility
-        self.dw = water_depth
+        self.dw = dw
         self.yield_acceleration = yield_acceleration
         self.cti = cti
         self.dc = dc

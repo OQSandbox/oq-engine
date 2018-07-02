@@ -145,7 +145,6 @@ class HAZUSLiquefaction(GDEM):
     REQUIRES_RUPTURE_PARAMETERS = set(("mag",))
     REQUIRES_SITES_PARAMETERS = set(("liquefaction_susceptibility",
                                      "dw", "vs30"))
-    IMT_ORDER = ["PGA",]
     
     def get_probability_failure(self, sctx, rctx, dctx, gsimtls=None):
         """
@@ -238,14 +237,14 @@ class HAZUSLiquefaction(GDEM):
                 # No liquefaction triggered
                 continue
             # Deal with settlement first
-            if "PGDFSettle" in imtls:
+            if "PGDfSettle" in imtls:
                 # As no uncertainty is given in the settlement model then
                 # probability of exceeding displacement level is the
                 # product of the probability of the epsilon, the probability
                 # of failure and a heaviside function taking the value of 1.0
                 # if the level is exceeded or 0.0 otherwise
                 for i, iml in enumerate(imtls["PGDfSettle"]):
-                    poes[pgdf_settle][:, i] += (
+                    poes["PGDfSettle"][:, i] += (
                         p_failure * (properties["settlement"] >= iml))
             # Deal with lateral spread
             if "PGDfLatSpread" in imtls:
@@ -267,16 +266,25 @@ class HAZUSLiquefaction(GDEM):
                     # As with settlement, no uncertainty is given for the
                     # lateral spread prediction model to the probability is
                     # defined by a Heaviside function
-                    poes[pgdf_latspread][:, i] += (p_failure *
+                    poes["PGDfLatSpread"][:, i] += (p_failure *
                                                    (displacement >= iml))
         # Returns PoEs as a list
         return [poes[imt] for imt in imtls]
 
 
-    def _get_gmv_field(self, gmfs):
+    def _get_gmv_field_location(self):
         """
+        Finds the location of the necessary IMTs within the IMT list
+        In this case only PGA is needed
+
         """
-        return [gmfs[self.IMT_ORDER.index("PGA")]]
+        if not PGA() in self.imts:
+            raise ValueError("HAZUS method requires calculation of PGA "
+                             "but not found in imts")
+
+        return [self.imts.index(PGA())]
+        #imt_locs = [imts.index(PGA())]
+        #return [gmfs[self.IMT_ORDER.index("PGA")]]
         
     def get_displacement_field(self, rupture, sitecol, cmaker, num_events=1,
                                truncation_level=None, correlation_model=None):
@@ -284,13 +292,14 @@ class HAZUSLiquefaction(GDEM):
         Returns the field of displacements
         """
         # Calculate the ground motion fields
-        
-        gmf_computer = GmfComputer(rupture, sitecol, self.IMT_ORDER,
+        gmf_loc = self._get_gmv_field_location()
+        gmf_computer = GmfComputer(rupture, sitecol,
+                                   [str(imt) for imt in self.imts],
                                    cmaker, truncation_level,
                                    correlation_model)
         gmfs = gmf_computer.compute(self.gmpe, num_events, seed=None)
         # Get the PGA field - should have the dimension [nsites, num_events]
-        gmvs = self._get_gmv_field(gmfs)
+        gmvs = gmfs[gmf_loc[0]]
         # Get site and rupture related properties
         properties = self._setup_properties(sitecol,
                                             gmf_computer.rupture)
@@ -305,10 +314,10 @@ class HAZUSLiquefaction(GDEM):
                 np.reshape(properties[key], [properties["n"], 1]),
                 num_events)
          
-        p_failure = np.zeros_like(gmvs[0])
+        p_failure = np.zeros_like(gmvs)
         for j in range(p_failure.shape[1]):
             p_failure[:, j] = self.get_failure_model(sitecol,
-                                                     gmvs[0][:, j],
+                                                     gmvs[:, j],
                                                      properties) 
         # Setup displacement field
         displacement = np.zeros([2, len(gmf_computer.sids), num_events],
@@ -325,7 +334,7 @@ class HAZUSLiquefaction(GDEM):
         # Some sites observe liquefaction - now to calculate lateral
         # spread and settlement
         # Calculate PGA to threshold PGA ratio
-        pga_pgat = gmvs[0][mask] / properties["pga_threshold"][mask]
+        pga_pgat = gmvs[mask] / properties["pga_threshold"][mask]
 
         # Calculate lateral spread
         lateral_spread = np.zeros_like(pga_pgat)
@@ -423,7 +432,6 @@ class HAZUSLandsliding(GDEM):
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
     REQUIRES_RUPTURE_PARAMETERS = set(("mag",))
     REQUIRES_SITES_PARAMETERS = set(("landsliding_susceptibility", "vs30"))
-    IMT_ORDER = ["PGA",]
 
     def get_probability_failure(self, sctx, rctx, dctx, gsimtls=None):
         """
@@ -494,24 +502,30 @@ class HAZUSLandsliding(GDEM):
                                  (1.0 - displacement_prob))
         return [poes]
 
-    def _get_gmv_field(self, gmfs):
+    def _get_gmv_field_location(self):
         """
         Get the ground motion values needed for the field - in this case PGA
         """
-        return [gmfs[self.IMT_ORDER.index("PGA")]]
+        if not PGA() in self.imts:
+            raise ValueError("HAZUS Method requires calculation of PGA "
+                             "but not found in imts")
+
+        return [self.imts.index(PGA())]
+        #return [gmfs[self.IMT_ORDER.index("PGA")]]
 
     def get_displacement_field(self, rupture, sitecol, cmaker, num_events=1,
                                truncation_level=None, correlation_model=None):
         """
         Returns the field of displacements
         """
+        gmf_loc = self._get_gmv_field_location()
         # Gets the ground motion fields
-        gmf_computer = GmfComputer(rupture, sitecol, self.IMT_ORDER,
-                                   cmaker, truncation_level,
-                                   correlation_model)
+        gmf_computer = GmfComputer(rupture, sitecol, 
+                                   [str(imt) for imt in self.imts],
+                                   cmaker, truncation_level, correlation_model)
         gmfs = gmf_computer.compute(self.gmpe, num_events, seed=None)
         # Get the PGA field
-        gmv = self._get_gmv_field(gmfs)[0]
+        gmv = gmfs[gmf_loc[0]]
         # Return the critical acceleration and proportion of mapped area
         properties = self._setup_properties(sitecol,
                                             gmf_computer.rupture)

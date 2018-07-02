@@ -24,7 +24,7 @@ import numpy
 import scipy.stats
 
 from openquake.hazardlib.const import StdDev
-from openquake.hazardlib.gsim.base import ContextMaker
+from openquake.hazardlib.gsim.base import ContextMaker, GeotechContextMaker
 from openquake.hazardlib.imt import from_string
 
 
@@ -191,6 +191,61 @@ class GmfComputer(object):
             gmf = gsim.to_imt_unit_values(
                 mean + intra_residual + inter_residual)
         return gmf
+
+
+class GeotechFieldComputer(GmfComputer):
+    """
+    Adaptation of the GmfComputer to deal with the geotechnical field
+    cases. Here there are two outputs, the displacements (which may themselves
+    have several metrics) and the ground motions
+    """
+    def __init__(self, rupture, sitecol, imts, cmaker,
+                 truncation_level=None, correlation_model=None):
+        assert isinstance(cmaker, GeotechContextMaker)
+        if len(sitecol) == 0:
+            raise ValueError('No sites')
+        elif len(imts) == 0:
+            raise ValueError('No IMTs')
+        elif len(cmaker.gsims) == 0:
+            raise ValueError('No GSIMs')
+        self.rupture = rupture
+        self.imts = [from_string(imt) for imt in imts]
+        self.cmaker = cmaker
+        self.gsims = sorted(cmaker.gsims)
+        self.truncation_level = truncation_level
+        self.correlation_model = correlation_model
+        # `rupture` can be a high level rupture object containing a low
+        # level hazardlib rupture object as a .rupture attribute
+        if hasattr(rupture, 'rupture'):
+            rupture = rupture.rupture
+        try:
+            self.sctx, self.dctx = rupture.sctx, rupture.dctx
+        except AttributeError:
+            self.sctx, self.dctx = cmaker.make_contexts(sitecol, rupture)
+        self.sids = self.sctx.sids
+        self.sites = sitecol
+        if correlation_model:  # store the filtered sitecol
+            self.sites = sitecol.filtered(self.sids)
+
+    def compute(self, gsim, num_events, seed=None):
+        """
+        :param gsim: a GSIM instance
+        :param num_events: the number of seismic events
+        :param seed: a random seed or None
+        :returns: a 32 bit array of shape (num_imts, num_sites, num_events)
+        """
+        try:  # read the seed from self.rupture.rupture if possible
+            seed = seed or self.rupture.rupture.seed
+        except AttributeError:
+            pass
+        if seed is not None:
+            numpy.random.seed(seed)
+        # In this particular case the GSIMs are organised by IMT in the context
+        # maker
+        return gsim.get_displacement_field(self.rupture, self.sites,
+                                           self.cmaker, num_events,
+                                           self.truncation_level,
+                                           self.correlation_model)
 
 
 # this is not used in the engine; it is still useful for usage in IPython
