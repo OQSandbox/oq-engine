@@ -450,3 +450,7 @@ class EventBasedCalculator(base.HazardCalculator):
                 logging.warn('Relative difference with the classical '
                              'mean curves for IMT=%s: %d%% at site index %d',
                              imt, rdiff * 100, index)
+
+
+@base.calculators.add('geotech_event_based')
+class GeotechEventBasedCalculator(base.HazardCalculator):

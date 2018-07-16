@@ -56,7 +56,6 @@ def _setup_fault_source():
     mo_m6p75 = 10.0 ** (16.05 + 1.5 * 6.75)
     rate1 = mo1 / mo_m6p75
     mfd1 = EvenlyDiscretizedMFD(6.75, 0.01, [rate1])
-    print(rate1)
     tom = PoissonTOM(1.0)
     aspect = 2.0
     rake = 90.0

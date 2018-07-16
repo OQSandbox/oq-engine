@@ -201,17 +201,22 @@ class GeotechFieldComputer(GmfComputer):
     """
     def __init__(self, rupture, sitecol, imts, cmaker,
                  truncation_level=None, correlation_model=None):
+        """
+        Note to ensure same inputs as GmfComputer, and are not actually used
+        in the function
+        """
         assert isinstance(cmaker, GeotechContextMaker)
         if len(sitecol) == 0:
             raise ValueError('No sites')
-        elif len(imts) == 0:
-            raise ValueError('No IMTs')
+        #elif len(imts) == 0:
+        #    raise ValueError('No IMTs')
         elif len(cmaker.gsims) == 0:
             raise ValueError('No GSIMs')
         self.rupture = rupture
-        self.imts = [from_string(imt) for imt in imts]
+        #self.imts = [from_string(imt) for imt in imts]
         self.cmaker = cmaker
         self.gsims = sorted(cmaker.gsims)
+        self.imts = [imt in self.gsims[0].imts]
         self.truncation_level = truncation_level
         self.correlation_model = correlation_model
         # `rupture` can be a high level rupture object containing a low

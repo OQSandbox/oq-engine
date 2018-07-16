@@ -118,5 +118,7 @@ class WrapperGMPE(GMPE):
         """
         Call the get mean and stddevs of the GMPE for the respective IMT
         """
+        if not imt in self.gmpes:
+            raise KeyError("IMT %s not defined for WrapperGMPE" % str(imt))
         return self.gmpes[imt].get_mean_and_stddevs(sctx, rctx, dctx, imt,
                                                     stddev_types)

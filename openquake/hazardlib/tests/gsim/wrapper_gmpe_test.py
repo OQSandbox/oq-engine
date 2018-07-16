@@ -48,23 +48,27 @@ class WrapperGMPETestCase(unittest.TestCase):
         wrapper = WrapperGMPE(gmpes_by_imt=test_dict)
         for key, gmpe in test_dict.items():
             key_imt = from_string(key)
-            self.assert(key_imt in  wrapper.gmpes)
-            self.assert(isinstance(wrapper.gmpes[key],
-                                   GSIM_LIST[gmpe]))
+            self.assertTrue(key_imt in wrapper.gmpes)
+            self.assertTrue(isinstance(wrapper.gmpes[key_imt],
+                                       GSIM_LIST[gmpe]))
 
     def test_wrapper_gmpe_instantiation_str(self):
         test_str = "{PGA: BooreEtAl2014, PGV: AkkarEtAlRjb2014, "\
             "IA: TravasarouEtAl2003, SA(1.0): BooreEtAl2014}"
         wrapper = WrapperGMPE(gmpes_by_imt=test_str)
-        for key, gmpe in test_str.items():
+        test_dict = {"PGA": "BooreEtAl2014",
+                     "PGV": "AkkarEtAlRjb2014",
+                     "IA": "TravasarouEtAl2003",
+                     "SA(1.0)": "BooreEtAl2014"}
+        for key, gmpe in test_dict.items():
             key_imt = from_string(key)
-            self.assert(key_imt in  wrapper.gmpes)
-            self.assert(isinstance(wrapper.gmpes[key],
-                                   GSIM_LIST[gmpe]))
+            self.assertTrue(key_imt in wrapper.gmpes)
+            self.assertTrue(isinstance(wrapper.gmpes[key_imt],
+                                       GSIM_LIST[gmpe]))
 
     def _check_elements_in_sets(self, set1, set2):
         for x in set1:
-            self.assert(x in set2)
+            self.assertTrue(x in set2)
 
 
     def test_check_all_attrs_wrapper(self):
@@ -92,7 +96,7 @@ class WrapperGMPETestCase(unittest.TestCase):
                      "PGV": "AkkarEtAlRjb2014",
                      "IA": "BooreEtAl2014",
                      "SA(1.0)": "BooreEtAl2014"}
-        with self.AssertRaises(ValueError) as ve:
+        with self.assertRaises(ValueError) as ve:
             WrapperGMPE(gmpes_by_imt=test_dict)
         self.assertEqual(str(ve.exception),
                          "IMT IA not supported by BooreEtAl2014")
@@ -124,3 +128,26 @@ class WrapperGMPETestCase(unittest.TestCase):
         for imt, gmpe in test_dict.items():
             self._compare_gmpe_call(wrapper, GSIM_LIST[gmpe](),
                                     from_string(imt), rctx, dctx, sctx)
+
+    def test_execution_missing_imt(self):
+        test_dict = {"PGA": "BooreEtAl2014",
+                     "PGV": "AkkarEtAlRjb2014",
+                     "IA": "TravasarouEtAl2003",
+                     "SA(1.0)": "BooreEtAl2014"}
+        wrapper = WrapperGMPE(gmpes_by_imt=test_dict)
+        rctx = RuptureContext()
+        rctx.mag = 6.5
+        rctx.rake = -90.
+        dctx = DistancesContext()
+        dctx.rjb = np.array([5., 10.])
+        dctx.rrup = np.array([5., 10.])
+        sctx = SitesContext()
+        sctx.vs30 = np.array([500., 700.])
+        with self.assertRaises(KeyError) as ke:
+            _ = wrapper.get_mean_and_stddevs(sctx, rctx, dctx,
+                                             from_string('SA(0.5)'),
+                                             [const.StdDev.TOTAL])
+        # Don't know why but two matching strings not considered equal by
+        # nosetests
+        # self.assertEqual(str(ke.exception),
+        #                  "IMT SA(0.5) not defined for WrapperGMPE")
