@@ -177,7 +177,8 @@ OQ_DISTRIBUTE = os.environ.get('OQ_DISTRIBUTE', 'processpool').lower()
 if OQ_DISTRIBUTE == 'futures':  # legacy name
     print('Warning: OQ_DISTRIBUTE=futures is deprecated', file=sys.stderr)
     OQ_DISTRIBUTE = os.environ['OQ_DISTRIBUTE'] = 'processpool'
-if OQ_DISTRIBUTE not in ('no', 'processpool', 'threadpool', 'celery', 'zmq'):
+if OQ_DISTRIBUTE not in ('no', 'processpool', 'threadpool', 'celery', 'zmq',
+                         'dask'):
     raise ValueError('Invalid oq_distribute=%s' % OQ_DISTRIBUTE)
 
 # data type for storing the performance information
@@ -343,7 +344,6 @@ def safely_call(func, args):
             mon = args[-1]
             mon.operation = func.__name__
             mon.children.append(child)  # child is a child of mon
-            child.hdf5path = mon.hdf5path
         else:  # in the DbServer
             mon = child
         try:
@@ -371,6 +371,8 @@ if OQ_DISTRIBUTE.startswith('celery'):
     app = Celery('openquake')
     app.config_from_object('openquake.engine.celeryconfig')
     safetask = task(safely_call, queue='celery')  # has to be global
+elif OQ_DISTRIBUTE == 'dask':
+    from dask.distributed import Client, as_completed
 
 
 class IterResult(object):
@@ -385,15 +387,18 @@ class IterResult(object):
         the number of bytes sent (0 if OQ_DISTRIBUTE=no)
     :param progress:
         a logging function for the progress report
+    :param hdf5:
+        if given, hdf5 file where to append the performance information
     """
     def __init__(self, iresults, taskname, argnames, num_tasks, sent,
-                 progress=logging.info):
+                 progress=logging.info, hdf5=None):
         self.iresults = iresults
         self.name = taskname
         self.argnames = ' '.join(argnames)
         self.num_tasks = num_tasks
         self.sent = sent
         self.progress = progress
+        self.hdf5 = hdf5
         self.received = []
         if self.num_tasks:
             self.log_percent = self._log_percent()
@@ -443,12 +448,13 @@ class IterResult(object):
                           humansize(tot), humansize(max_per_task))
 
     def save_task_info(self, mon):
-        if mon.hdf5path:
+        if self.hdf5:
+            mon.hdf5 = self.hdf5
             duration = mon.children[0].duration  # the task is the first child
             tup = (mon.task_no, mon.weight, duration, self.received[-1])
             data = numpy.array([tup], task_data_dt)
-            hdf5.extend3(mon.hdf5path, 'task_info/' + self.name, data,
-                         argnames=self.argnames, sent=self.sent)
+            hdf5.extend(self.hdf5['task_info/' + self.name], data,
+                        argnames=self.argnames, sent=self.sent)
         mon.flush()
 
     def reduce(self, agg=operator.add, acc=None):
@@ -504,6 +510,7 @@ def _wakeup(sec, mon):
 class Starmap(object):
     task_ids = []
     calc_id = None
+    hdf5 = None
 
     @classmethod
     def init(cls, poolsize=None, distribute=OQ_DISTRIBUTE):
@@ -515,6 +522,8 @@ class Starmap(object):
             cls.pool = multiprocessing.dummy.Pool(poolsize)
         elif distribute == 'no' and hasattr(cls, 'pool'):
             cls.shutdown()
+        elif distribute == 'dask':
+            cls.dask_client = Client()
 
     @classmethod
     def shutdown(cls, poolsize=None):
@@ -523,6 +532,8 @@ class Starmap(object):
             cls.pool.terminate()
             cls.pool.join()
             del cls.pool
+        if hasattr(cls, 'dask_client'):
+            del cls.dask_client
 
     @classmethod
     def apply(cls, task, args, concurrent_tasks=cpu_count * 3,
@@ -591,9 +602,14 @@ class Starmap(object):
         Add .task_no and .weight to the monitor and yield back
         the arguments by pickling them.
         """
+        task_info = 'task_info/' + self.name
         for task_no, args in enumerate(self.task_args, 1):
             mon = args[-1]
             assert isinstance(mon, Monitor), mon
+            if mon.hdf5 and task_no == 1:
+                self.hdf5 = mon.hdf5
+                if task_info not in self.hdf5:  # first time
+                    hdf5.create(mon.hdf5, task_info, task_data_dt)
             # add incremental task number and task weight
             mon.task_no = task_no
             mon.weight = getattr(args[0], 'weight', 1.)
@@ -619,9 +635,11 @@ class Starmap(object):
             it = self._iter_celery()
         elif self.distribute == 'zmq':
             it = self._iter_zmq()
+        elif self.distribute == 'dask':
+            it = self._iter_dask()
         num_tasks = next(it)
         return IterResult(it, self.name, self.argnames, num_tasks,
-                          self.sent, self.progress)
+                          self.sent, self.progress, self.hdf5)
 
     def reduce(self, agg=operator.add, acc=None):
         """
@@ -697,6 +715,14 @@ class Starmap(object):
                     continue
                 num_results -= 1
                 yield res
+
+    def _iter_dask(self):
+        safefunc = functools.partial(safely_call, self.task_func)
+        allargs = list(self._genargs())
+        yield len(allargs)
+        cl = self.dask_client
+        for fut in as_completed(cl.map(safefunc, cl.scatter(allargs))):
+            yield fut.result()
 
 
 def sequential_apply(task, args, concurrent_tasks=cpu_count * 3,
