@@ -27,7 +27,8 @@ import functools
 # NB: (MS) the management of the IMTs implemented here is horrible and will
 # be thrown away when we will need to introduce a new IMT.
 
-__all__ = ('PGA', 'PGV', 'PGD', 'SA', 'IA', 'CAV', 'RSD', 'MMI')
+__all__ = ('PGA', 'PGV', 'PGD', 'SA', 'IA', 'CAV', 'RSD', 'MMI',
+           'PGDfLatSpread', 'PGDfSettle', 'PGDfSlope', 'PGDfRupture')
 
 DEFAULT_SA_DAMPING = 5.0
 
