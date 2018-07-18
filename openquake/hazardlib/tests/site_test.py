@@ -34,6 +34,7 @@ class SiteModelParam(object):
         self.reference_vs30_type = 'measured'
         self.reference_depth_to_1pt0km_per_sec = 3.4
         self.reference_depth_to_2pt5km_per_sec = 5.6
+<<<<<<< HEAD
         self.reference_backarc = False
         self.liquefaction_susceptibility = 2
         self.landsliding_susceptibility = 1
@@ -46,6 +47,8 @@ class SiteModelParam(object):
         self.dwb = 0.0
         self.precip = 0.0
         self.hwater = 0.0
+=======
+>>>>>>> master
 
 
 class SiteTestCase(unittest.TestCase):
@@ -56,12 +59,15 @@ class SiteTestCase(unittest.TestCase):
             'vs30measured': False,
             'z1pt0': 20,
             'z2pt5': 30,
+<<<<<<< HEAD
             'backarc': True,
             'liquefaction_susceptibility': 2,
             'landsliding_susceptibility': 1,
             'dw': 3.0,
             'yield_acceleration': 0.15,
             'cti': 4.5
+=======
+>>>>>>> master
         }
         default_kwargs.update(kwargs)
         kwargs = default_kwargs
@@ -107,6 +113,7 @@ class SiteCollectionCreationTestCase(unittest.TestCase):
     def test_from_sites(self):
         s1 = Site(location=Point(10, 20, 30),
                   vs30=1.2, vs30measured=True,
+<<<<<<< HEAD
                   z1pt0=3.4, z2pt5=5.6, backarc=True,
                   liquefaction_susceptibility=2,
                   landsliding_susceptibility=1,
@@ -117,6 +124,12 @@ class SiteCollectionCreationTestCase(unittest.TestCase):
                   liquefaction_susceptibility=4,
                   landsliding_susceptibility=0,
                   dw=5.0, cti=5.5, yield_acceleration=0.1)
+=======
+                  z1pt0=3.4, z2pt5=5.6)
+        s2 = Site(location=Point(-1.2, -3.4, -5.6),
+                  vs30=55.4, vs30measured=False,
+                  z1pt0=66.7, z2pt5=88.9)
+>>>>>>> master
         cll = SiteCollection([s1, s2])
         assert_eq(cll.vs30, [1.2, 55.4])
         assert_eq(cll.vs30measured, [True, False])
@@ -125,17 +138,20 @@ class SiteCollectionCreationTestCase(unittest.TestCase):
         assert_eq(cll.mesh.lons, [10, -1.2])
         assert_eq(cll.mesh.lats, [20, -3.4])
         assert_eq(cll.mesh.depths, [30, -5.6])
+<<<<<<< HEAD
         assert_eq(cll.backarc, [True, False])
         assert_eq(cll.liquefaction_susceptibility, [2, 4])
         assert_eq(cll.landsliding_susceptibility, [1, 0])
         assert_eq(cll.dw, [3.0, 5.0])
         assert_eq(cll.cti, [4.5, 5.5])
         assert_eq(cll.yield_acceleration, [0.15, 0.1])
+=======
+>>>>>>> master
         for arr in (cll.vs30, cll.z1pt0, cll.z2pt5):
             self.assertIsInstance(arr, numpy.ndarray)
             self.assertEqual(arr.flags.writeable, False)
             self.assertEqual(arr.dtype, float)
-        for arr in (cll.vs30measured, cll.backarc):
+        for arr in (cll.vs30measured,):
             self.assertIsInstance(arr, numpy.ndarray)
             self.assertEqual(arr.flags.writeable, False)
             self.assertEqual(arr.dtype, bool)
@@ -155,8 +171,9 @@ class SiteCollectionCreationTestCase(unittest.TestCase):
         lons = [10, -1.2]
         lats = [20, -3.4]
         depths = [30, -5.6]
+        req_params = 'vs30 vs30measured z1pt0 z2pt5 backarc'.split()
         cll = SiteCollection.from_points(
-            lons, lats, depths, SiteModelParam())
+            lons, lats, depths, SiteModelParam(), req_params)
         assert_eq(cll.vs30, [1.2, 1.2])
         assert_eq(cll.vs30measured, [True, True])
         assert_eq(cll.z1pt0, [3.4, 3.4])

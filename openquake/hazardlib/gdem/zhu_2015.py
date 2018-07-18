@@ -38,7 +38,6 @@ class ZhuEtAl2015Global(HAZUSLiquefaction):
     """
     DEFINED_FOR_DEFORMATION_TYPES = set((PGDfSettle, PGDfLatSpread))
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
-    REQUIRES_RUPTURE_PARAMETERS = set(("mag",))
 
     # Needs all HAZUS attributes (liquefaction susceptibility and dw,
     # as well as compound topographic index (CTI)

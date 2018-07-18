@@ -113,7 +113,6 @@ class WrapperGMPE(GMPE):
         gmpes_by_imt = cls._gmpe_str_to_dict(gmpes_by_imt)
         return cls(gmpes_by_imt=gmpes_by_imt)
 
-
     def get_mean_and_stddevs(self, sctx, rctx, dctx, imt, stddev_types):
         """
         Call the get mean and stddevs of the GMPE for the respective IMT

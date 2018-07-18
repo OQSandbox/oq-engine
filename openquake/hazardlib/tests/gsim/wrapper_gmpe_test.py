@@ -102,8 +102,6 @@ class WrapperGMPETestCase(unittest.TestCase):
                          "IMT IA not supported by BooreEtAl2014")
 
     def _compare_gmpe_call(self, wrapper, gmpe, imt, rctx, dctx, sctx):
-        """
-        """
         mean_wr, [stddev_wr] = wrapper.get_mean_and_stddevs(
             sctx, rctx, dctx, imt, [const.StdDev.TOTAL])
         mean, [stddev] = gmpe.get_mean_and_stddevs(sctx, rctx, dctx, imt,
@@ -148,6 +146,6 @@ class WrapperGMPETestCase(unittest.TestCase):
                                              from_string('SA(0.5)'),
                                              [const.StdDev.TOTAL])
         # Don't know why but two matching strings not considered equal by
-        # nosetests
-        # self.assertEqual(str(ke.exception),
-        #                  "IMT SA(0.5) not defined for WrapperGMPE")
+        # nosetests - stripping the excess inverted commas
+        self.assertEqual(str(ke.exception).strip("'"),
+                         "IMT SA(0.5) not defined for WrapperGMPE")

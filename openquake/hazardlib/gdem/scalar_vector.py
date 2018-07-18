@@ -35,7 +35,6 @@ class SlopeDisplacementScalar(GDEM):
     """
     DEFINED_FOR_DEFORMATION_TYPES = set((PGDfSlope,))
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
-    REQUIRES_RUPTURE_PARAMETERS = set(("mag",))
     REQUIRES_SITES_PARAMETERS = set(("yield_acceleration", "vs30"))
     IMT_ORDER = []
 

@@ -27,7 +27,7 @@ from scipy.stats import truncnorm
 from openquake.hazardlib.imt import from_string
 from openquake.hazardlib.gsim.base import GMPE
 from openquake.hazardlib.gsim.wrapper import WrapperGMPE
-from openquake.hazardlib.calc.gmf import GmfComputer
+#from openquake.hazardlib.calc.gmf import GmfComputer
 from openquake.hazardlib import const
 
 
@@ -66,19 +66,18 @@ class GDEM(GMPE):
         GMPE sets organised by intensity measure type, i.e.
         {IMT1: GMPE1, IMT2: GMPE2, ...}
     """
-    # Overwide the abstract methods in GMPE class
+    # Overwrite the abstract methods in GMPE class
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set(())
-    DEFINED_FOR_INTENSITY_MEASURE_COMPONENT = set(())
+    DEFINED_FOR_INTENSITY_MEASURE_COMPONENT = None
     DEFINED_FOR_DEFORMATION_TYPES = set(())
     DEFINED_FOR_STANDARD_DEVIATION_TYPES = set((const.StdDev.TOTAL,))
-    DEFINED_FOR_TECTONIC_REGION_TYPE = set(())
+    DEFINED_FOR_TECTONIC_REGION_TYPE = None
     REQUIRES_DISTANCES = set(())
-    REQUIRES_RUPTURE_PARAMETERS = set(())
+    REQUIRES_RUPTURE_PARAMETERS = set(("mag",))
     REQUIRES_SITES_PARAMETERS = set(())
 
     def __init__(self, gmpe, truncation=3.0, nsample=1000):
         super().__init__()
-        assert isinstance(gmpe, WrapperGMPE)
         self.gmpe = gmpe
         self.imts = list(self.gmpe.gmpes)
         for imt in self.imts:

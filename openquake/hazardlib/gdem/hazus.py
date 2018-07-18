@@ -142,7 +142,6 @@ class HAZUSLiquefaction(GDEM):
     """
     DEFINED_FOR_DEFORMATION_TYPES = set((PGDfSettle, PGDfLatSpread))
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
-    REQUIRES_RUPTURE_PARAMETERS = set(("mag",))
     REQUIRES_SITES_PARAMETERS = set(("liquefaction_susceptibility",
                                      "dw", "vs30"))
     
@@ -430,7 +429,6 @@ class HAZUSLandsliding(GDEM):
     """
     DEFINED_FOR_DEFORMATION_TYPES = set((PGDfSlope,))
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
-    REQUIRES_RUPTURE_PARAMETERS = set(("mag",))
     REQUIRES_SITES_PARAMETERS = set(("landsliding_susceptibility", "vs30"))
 
     def get_probability_failure(self, sctx, rctx, dctx, gsimtls=None):

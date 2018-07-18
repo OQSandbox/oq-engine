@@ -45,31 +45,7 @@ class Site(object):
     :param z2pt5:
         Vertical distance from earth surface to the layer where seismic waves
         start to propagate with a speed above 2.5 km/sec, in km.
-    :param backarc":
-        Boolean value, ``True`` if the site is in the subduction backarc and
-        ``False`` if it is in the subduction forearc or is unknown
-    :param liquefaction_susceptibility:
-        HAZUS Liquefaction susceptibility classes (as integer in range 0 - 5)
-    :param landsliding_susceptibility:
-        HAZUS Landsliding susceptibility class (as integer in range 0 - 10)
-    :param dw:
-        Depth to water table (m)
-    :param yield_acceleration:
-        Yield acceleration (g) for landsliding
-    :param slope:
-        Slope angle (degrees)
-    :param cti:
-        Compound Topographic Index (dimensionless)
-    :param dc:
-        Distance to coast (km)
-    :param dr:
-        Distance to river (km)
-    :param dwb:
-        Distance to nearest water body (km)
-    :param hwater:
-        Elevation above nearest water body (m)
-    :param precip:
-        Annual Precipitation (mm)
+
     :raises ValueError:
         If any of ``vs30``, ``z1pt0`` or ``z2pt5`` is zero or negative.
 
@@ -77,52 +53,22 @@ class Site(object):
 
         :class:`Sites <Site>` are pickleable
     """
-    _slots_ = ('location vs30 vs30measured z1pt0 z2pt5 backarc '
-               'liquefaction_susceptibility landsliding_susceptibility '
-               'dw yield_acceleration slope cti dc dr dwb hwater precip'
-               ).split()
-
-    def __init__(self, location, vs30, vs30measured, z1pt0, z2pt5,
-                 backarc=False, liquefaction_susceptibility=0,
-                 landsliding_susceptibility=0, dw=10.,
-                 yield_acceleration=0.0, slope=0.0, cti=0.0, dc=0.0, dr=0.0,
-                 dwb=0.0, hwater=0.0, precip=0.0):
-        if not vs30 > 0:
+    def __init__(self, location, vs30=numpy.nan, vs30measured=False,
+                 z1pt0=numpy.nan, z2pt5=numpy.nan, **extras):
+        if not numpy.isnan(vs30) and vs30 <= 0:
             raise ValueError('vs30 must be positive')
-        if not z1pt0 > 0:
+        if not numpy.isnan(z1pt0) and z1pt0 <= 0:
             raise ValueError('z1pt0 must be positive')
-        if not z2pt5 > 0:
+        if not numpy.isnan(z2pt5) and z2pt5 <= 0:
             raise ValueError('z2pt5 must be positive')
         self.location = location
         self.vs30 = vs30
         self.vs30measured = vs30measured
         self.z1pt0 = z1pt0
         self.z2pt5 = z2pt5
-        self.backarc = backarc
-        # Geotech parameters
-        # HAZUS classes must be integers between 0 and 5 (for liquefaction)
-        # or 0 and 10 (for landsliding)
-        if liquefaction_susceptibility < 0 or liquefaction_susceptibility > 5\
-            or not isinstance(liquefaction_susceptibility, int):
-            raise ValueError('liqufaction_susceptibility must be integer'
-                             ' between 0 and 5')
-        self.liquefaction_susceptibility = liquefaction_susceptibility
-        if landsliding_susceptibility < 0 or landsliding_susceptibility > 10\
-            or not isinstance(landsliding_susceptibility, int):
-            raise ValueError('landsliding_susceptibility must be integer'
-                             ' between 0 and 10')
-        self.landsliding_susceptibility = landsliding_susceptibility
-        self.dw = dw
-        self.yield_acceleration = yield_acceleration
-        self.slope = slope
-        self.cti = cti
-        # The rest of the parameters are from Zhu et al. (2017) - not used
-        # initially but placeholders subsequently
-        self.dc = dc
-        self.dr = dr
-        self.dwb = dwb
-        self.hwater = hwater
-        self.precip = precip
+        for param, val in extras.items():
+            assert param in site_param_dt, param
+            setattr(self, param, val)
 
     def __str__(self):
         """
@@ -130,14 +76,13 @@ class Site(object):
         >>> loc = openquake.hazardlib.geo.point.Point(1, 2, 3)
         >>> str(Site(loc, 760.0, True, 100.0, 5.0))
         '<Location=<Latitude=2.000000, Longitude=1.000000, Depth=3.0000>, \
-Vs30=760.0000, Vs30Measured=True, Depth1.0km=100.0000, Depth2.5km=5.0000, \
-Backarc=False>'
+Vs30=760.0000, Vs30Measured=True, Depth1.0km=100.0000, Depth2.5km=5.0000>'
         """
         return (
             "<Location=%s, Vs30=%.4f, Vs30Measured=%r, Depth1.0km=%.4f, "
-            "Depth2.5km=%.4f, Backarc=%r>") % (
+            "Depth2.5km=%.4f>") % (
             self.location, self.vs30, self.vs30measured, self.z1pt0,
-            self.z2pt5, self.backarc)
+            self.z2pt5)
 
     def __hash__(self):
         return hash((self.location.x, self.location.y))
@@ -164,12 +109,47 @@ def _extract(array_or_float, indices):
         return array_or_float
 
 
+# dtype of each valid site parameter
+site_param_dt = {
+    'sids': numpy.uint32,
+    'lons': numpy.float64,
+    'lats': numpy.float64,
+    'depths': numpy.float64,
+    'lon': numpy.float64,
+    'lat': numpy.float64,
+    'depth': numpy.float64,
+    'vs30': numpy.float64,
+    'vs30measured': numpy.bool,
+    'z1pt0': numpy.float64,
+    'z2pt5': numpy.float64,
+    'backarc': numpy.bool,
+
+    # parameters for geotechnic hazard
+    'liquefaction_susceptibility': numpy.int16,
+    'landsliding_susceptibility': numpy.int16,
+    'dw': numpy.float64,
+    'yield_acceleration': numpy.float64,
+    'slope': numpy.float64,
+    'cti': numpy.float64,
+    'dc': numpy.float64,
+    'dr': numpy.float64,
+    'dwb': numpy.float64,
+    'hwater': numpy.float64,
+    'precip': numpy.float64
+}
+
+
 class SiteCollection(object):
-    """
+    __doc__ = """\
     A collection of :class:`sites <Site>`.
 
     Instances of this class are intended to represent a large collection
-    of sites in a most efficient way in terms of memory usage.
+    of sites in a most efficient way in terms of memory usage. The most
+    common usage is to instantiate it as `SiteCollection.from_points`, by
+    passing the set of required parameters, which must be a subset of the
+    following parameters:
+
+%s
 
     .. note::
 
@@ -181,29 +161,9 @@ class SiteCollection(object):
 
     :param sites:
         A list of instances of :class:`Site` class.
-    """
-    dtype = numpy.dtype([
-        ('sids', numpy.uint32),
-        ('lons', numpy.float64),
-        ('lats', numpy.float64),
-        ('depths', numpy.float64),
-        ('vs30', numpy.float64),
-        ('vs30measured', numpy.bool),
-        ('z1pt0', numpy.float64),
-        ('z2pt5', numpy.float64),
-        ('backarc', numpy.bool),
-        ('landsliding_susceptibility', numpy.uint32),
-        ('liquefaction_susceptibility', numpy.uint32),
-        ('dw', numpy.float64),
-        ('yield_acceleration', numpy.float64),
-        ('slope', numpy.float64),
-        ('cti', numpy.float64),
-        ('dc', numpy.float64),
-        ('dr', numpy.float64),
-        ('dwb', numpy.float64),
-        ('hwater', numpy.float64),
-        ('precip', numpy.float64)
-    ])
+    """ % '\n'.join('    - %s: %s' % item
+                    for item in sorted(site_param_dt.items())
+                    if item[0] not in ('lon', 'lat'))
 
     @classmethod
     def from_shakemap(cls, shakemap_array):
@@ -213,7 +173,9 @@ class SiteCollection(object):
         self = object.__new__(cls)
         self.complete = self
         n = len(shakemap_array)
-        self.array = arr = numpy.zeros(n, self.dtype)
+        dtype = numpy.dtype([(p, site_param_dt[p])
+                             for p in 'sids lons lats depths vs30'.split()])
+        self.array = arr = numpy.zeros(n, dtype)
         arr['sids'] = numpy.arange(n, dtype=numpy.uint32)
         arr['lons'] = shakemap_array['lon']
         arr['lats'] = shakemap_array['lat']
@@ -222,8 +184,9 @@ class SiteCollection(object):
         arr.flags.writeable = False
         return self
 
-    @classmethod
-    def from_points(cls, lons, lats, depths=None, sitemodel=None):
+    @classmethod  # this is the method used by the engine
+    def from_points(cls, lons, lats, depths=None, sitemodel=None,
+                    req_site_params=()):
         """
         Build the site collection from
 
@@ -234,12 +197,9 @@ class SiteCollection(object):
         :param depths:
             a sequence of depths (or None)
         :param sitemodel:
-            None or an object containing the attributes
-            reference_vs30_value,
-            reference_vs30_type,
-            reference_depth_to_1pt0km_per_sec,
-            reference_depth_to_2pt5km_per_sec,
-            reference_backarc
+            None or an object containing site parameters as attributes
+        :param req_site_params:
+            a sequence of required site parameters, possibly empty
         """
         if depths is None:
             depths = numpy.zeros(len(lons))
@@ -247,6 +207,11 @@ class SiteCollection(object):
                                                        len(depths))
         self = object.__new__(cls)
         self.complete = self
+        req = ['sids', 'lons', 'lats', 'depths'] + sorted(
+            par for par in req_site_params if par not in ('lons', 'lats'))
+        if 'vs30' in req and 'vs30measured' not in req:
+            req.append('vs30measured')
+        self.dtype = numpy.dtype([(p, site_param_dt[p]) for p in req])
         self.array = arr = numpy.zeros(len(lons), self.dtype)
         arr['sids'] = numpy.arange(len(lons), dtype=numpy.uint32)
         arr['lons'] = fix_lon(numpy.array(lons))
@@ -254,35 +219,24 @@ class SiteCollection(object):
         arr['depths'] = numpy.array(depths)
         if sitemodel is None:
             pass
-        elif hasattr(sitemodel, 'reference_vs30_value'):  # oqparam
-            arr['vs30'] = sitemodel.reference_vs30_value
-            arr['vs30measured'] = sitemodel.reference_vs30_type == 'measured'
-            arr['z1pt0'] = sitemodel.reference_depth_to_1pt0km_per_sec
-            arr['z2pt5'] = sitemodel.reference_depth_to_2pt5km_per_sec
-            arr['backarc'] = sitemodel.reference_backarc
-            arr['vs30'] = sitemodel.reference_vs30_value
-            arr['vs30measured'] = sitemodel.reference_vs30_type == 'measured'
-            arr['z1pt0'] = sitemodel.reference_depth_to_1pt0km_per_sec
-            arr['z2pt5'] = sitemodel.reference_depth_to_2pt5km_per_sec
-            arr['backarc'] = sitemodel.reference_backarc
-            arr['liquefaction_susceptibility'] =\
-                sitemodel.liquefaction_susceptibility
-            arr['landsliding_susceptibility'] =\
-                sitemodel.landsliding_susceptibility
-            arr['dw'] = sitemodel.dw
-            arr['yield_acceleration'] = sitemodel.yield_acceleration
-            arr['slope'] = sitemodel.slope
-            arr['cti'] = sitemodel.cti
-            arr['dc'] = sitemodel.dc
-            arr['dr'] = sitemodel.dr
-            arr['dwb'] = sitemodel.dwb
-            arr['hwater'] = sitemodel.hwater
-            arr['precip'] = sitemodel.precip
-            arr.flags.writeable = False
-        elif 'vs30' in sitemodel.dtype.names:  # site params
-            for name in sitemodel.dtype.names[2:]:  # except lon, lat
-                arr[name] = sitemodel[name]
+        elif hasattr(sitemodel, 'reference_vs30_value'):
+            # sitemodel is actually an OqParam instance
+            self._set('vs30', sitemodel.reference_vs30_value)
+            self._set('vs30measured',
+                      sitemodel.reference_vs30_type == 'measured')
+            self._set('z1pt0', sitemodel.reference_depth_to_1pt0km_per_sec)
+            self._set('z2pt5', sitemodel.reference_depth_to_2pt5km_per_sec)
+        else:
+            for name in sitemodel.dtype.names:
+                if name not in ('lon', 'lat'):
+                    self._set(name, sitemodel[name])
         return self
+
+    def _set(self, param, value):
+        # param comes from the file site_model.xml file which usually contains
+        # a lot of parameters; the parameters that are not required are ignored
+        if param in self.array.dtype.names:  # is required
+            self.array[param] = value
 
     xyz = Mesh.xyz
 
@@ -314,9 +268,11 @@ class SiteCollection(object):
         """
         Build a complete SiteCollection from a list of Site objects
         """
-        if hasattr(sites, 'sids'):
-            numpy.testing.assert_equal(sites.sids, numpy.arange(len(sites)))
-        self.array = arr = numpy.zeros(len(sites), self.dtype)
+        dtlist = ([(p, site_param_dt[p])
+                   for p in ('sids', 'lons', 'lats', 'depths')] +
+                  [(p, site_param_dt[p]) for p in sorted(vars(sites[0]))
+                   if p in site_param_dt])
+        self.array = arr = numpy.zeros(len(sites), dtlist)
         self.complete = self
         for i in range(len(arr)):
             arr['sids'][i] = i
@@ -327,20 +283,6 @@ class SiteCollection(object):
             arr['vs30measured'][i] = sites[i].vs30measured
             arr['z1pt0'][i] = sites[i].z1pt0
             arr['z2pt5'][i] = sites[i].z2pt5
-            arr['backarc'][i] = sites[i].backarc
-            arr['landsliding_susceptibility'][i] =\
-                sites[i].landsliding_susceptibility
-            arr['liquefaction_susceptibility'][i] =\
-                sites[i].liquefaction_susceptibility
-            arr['dw'][i]= sites[i].dw
-            arr['yield_acceleration'][i] = sites[i].yield_acceleration
-            arr['slope'][i] = sites[i].slope
-            arr['cti'][i] = sites[i].cti
-            arr['dc'][i] = sites[i].dc
-            arr['dr'][i] = sites[i].dr
-            arr['dwb'][i] = sites[i].dwb
-            arr['hwater'][i] = sites[i].hwater
-            arr['precip'][i] = sites[i].precip
 
         # protect arrays from being accidentally changed. it is useful
         # because we pass these arrays directly to a GMPE through
@@ -391,9 +333,10 @@ class SiteCollection(object):
         Iterate through all :class:`sites <Site>` in the collection, yielding
         one at a time.
         """
+        params = self.array.dtype.names[4:]  # except sids, lons, lats, depths
         for i, location in enumerate(self.mesh):
-            yield Site(location, self.vs30[i], self.vs30measured[i],
-                       self.z1pt0[i], self.z2pt5[i], self.backarc[i])
+            kw = {p: self.array[i][p] for p in params}
+            yield Site(location, **kw)
 
     def filter(self, mask):
         """
@@ -458,10 +401,7 @@ class SiteCollection(object):
         return self.array[sid]
 
     def __getattr__(self, name):
-        if name not in ('vs30 vs30measured z1pt0 z2pt5 backarc lons lats '
-                        'depths sids liquefaction_susceptibility dw '
-                        'landsliding_susceptibility yield_acceleration cti '
-                        'dc dr dwb hwater precip'):
+        if name not in site_param_dt:
             raise AttributeError(name)
         return self.array[name]
 

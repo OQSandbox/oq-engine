@@ -28,7 +28,7 @@ from openquake.hazardlib.gsim.wrapper import WrapperGMPE
 from openquake.hazardlib.contexts import GeotechContextMaker
 from openquake.hazardlib.imt import (PGA, SA, PGV,PGDfLatSpread,
                                      PGDfSettle, PGDfSlope)
-from openquake.hazardlib.site import Site, SiteCollection
+from openquake.hazardlib.site import Site, SiteCollection, site_param_dt
 from openquake.baselib.general import DictArray, groupby, AccumDict
 from openquake.hazardlib.calc.filters import SourceFilter
 from openquake.hazardlib.calc.hazard_curve import geotech_classical
@@ -38,7 +38,7 @@ from openquake.hazardlib import valid
 
 def _setup_fault_source():
     """
-
+    Builds a fault source using the PEER Bending Fault case.
     """
     point_order_dipping_east = [Point(-64.78365, -0.45236),
                                 Point(-64.80164, -0.45236),
@@ -68,7 +68,10 @@ def _setup_fault_source():
 
 def _setup_sites_liquefaction():
     """
+    Returns a collection of sites for liquefaction hazard analysis using the
+    HAZUS method
     """
+    
     point_1 = Point(-64.98651, -0.15738)
     point_2 = Point(-64.77466, -0.45686)
     point_3 = Point(-64.92747, -0.38363)
@@ -84,13 +87,33 @@ def _setup_sites_liquefaction():
     sites = []
     for locn in [point_1, point_2, point_3, point_4]:
         for vs30, hazus_cat, dw in params:
-            sites.append(Site(locn, vs30, True, 48.0, 0.607,
-                              liquefaction_susceptibility=hazus_cat, dw=dw))
-    return SiteCollection(sites)
+            sites.append({"lon": locn.longitude,
+                          "lat": locn.latitude, "vs30": vs30,
+                          "vs30measured"=False, "z1pt0"=48.0, "z2pt5"=0.607,
+                          "hazus_susceptibility"=hazus_cat, "dw"=dw})
+    site_model_dt = numpy.dtype([(p, site_param_dt[p])
+                                 for p in sorted(sites[0])])
+    tuples = [tuple(param[name] for name in site_model_dt.names)
+              for site in sites]
+    sites = np.array(tuples, site_model_dt)
+    req_site_params = ("vs30", "liquefactions_susceptibility", "dw")
+    return SiteCollection.from_points(sites["lon"], sites["lat"],
+                                      sitemodel=sites,
+                                      req_site_params=req_site_params)
+
+
+#            sites.append(Site(locn, vs30, True, 48.0, 0.607,
+#                              liquefaction_susceptibility=hazus_cat, dw=dw))
+#    return SiteCollection.from_points(lons=sites[:, 0], lats=sites[:, 1],
+#        vs30=sites[:, 2], vs30measured=sites[:, 3].astype(bool),
+#        z1pt0=sites[:, 4], z2pt5=sites[:, 5],
+#        liquefaction_susceptibility=sites[:, 6].astype(int), dw=sites[:, 7],
+#        req_site_params=("vs30, liquefaction_susceptibility", "dw"))
 
 def _setup_sites_landsliding():
     """
-    Returns a collections of sites at four different locations with
+    Returns a collections of sites at four different locations with different
+    landsliding properties for the HAZUS method
     """
     ls_params = [[800., 10],
                  [800., 9],
@@ -112,10 +135,11 @@ def _setup_sites_landsliding():
         for vs30, hazus_ls_cat in ls_params:
             sites.append(Site(locn, vs30, True, 48.0, 0.607,
                               landsliding_susceptibility=hazus_ls_cat))
-    return SiteCollection(sites)
+    return SiteCollection(sites,
+                          req_site_params("landsliding_susceptibility",))
 
 
-class LiquefactionClassicalTestCase(unittest.TestCase):
+class LiquefactionHAZUSClassicalTestCase(unittest.TestCase):
     """
     Tests the HAZUS Liquefaction Calculator
     """
@@ -125,8 +149,8 @@ class LiquefactionClassicalTestCase(unittest.TestCase):
         self.source = _setup_fault_source()
         self.sites = _setup_sites_liquefaction()
         self.gmpe = WrapperGMPE(gmpes_by_imt={"PGA": "BooreEtAl2014"})
-        self.gsimtls = {PGDfLatSpread(): [0.001, 0.1, 1., 5., 10.],
-                        PGDfSettle(): [0.001, 0.1, 1., 5., 10.]}
+        self.gsimtls = {"PGDfLatSpread": [0.001, 0.1, 1., 5., 10.],
+                        "PGDfSettle": [0.001, 0.1, 1., 5., 10.]}
 
     def test_liquefaction_hazus_classical_execution(self):
         #cmaker = GeotechContextMaker([hazus_liq])
@@ -142,7 +166,7 @@ class LiquefactionClassicalTestCase(unittest.TestCase):
             gsims, param)
 
 
-class LandslidingClassicalTestCase(unittest.TestCase):
+class LandslidingHAZUSClassicalTestCase(unittest.TestCase):
     """
     Tests the Hazus landsliding
     """
