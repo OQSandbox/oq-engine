@@ -22,8 +22,8 @@ from scipy.interpolate import interp1d
 from collections import OrderedDict
 from openquake.hazardlib.gdem.base import GDEM
 from openquake.hazardlib import const
-from openquake.hazardlib.imt import (PGDfSettle, PGDfLatSpread, PGDfSlope, PGA,
-                                     PGV, IA)
+from openquake.hazardlib.imt import (PGDfSettle, PGDfLatSpread, PGDfSlope,
+                                     PGA, PGV, IA)
 
 
 CM2M = -np.log(100.0)
@@ -58,13 +58,12 @@ class SlopeDisplacementScalar(GDEM):
             stddevs.append(gsimtls[imt][const.StdDev.TOTAL])
         return means, stddevs
 
-    def get_probability_failure(self, sctx, rctx, dctx, gsimtls=None):
+    def get_probability_failure(self, sctx, rctx, dctx):
         """
         Returns the probability of failure - in this case any ground motions
         exceeding yield acceleration have a probability of failure of 1.0
         """
-        if not gsimtls:
-            gsimtls = self.get_mean_and_stddevs(sctx, rctx, dctx)
+        gsimtls = self.get_mean_and_stddevs(sctx, rctx, dctx)
         properties = self._setup_properties(sctx, rctx)
         gmv_mean, gmv_sigma = self._get_failure_gmvs(gsimtls)
         p_failure = np.zeros_like(properties["a_c"])

@@ -24,6 +24,7 @@ from openquake.baselib.performance import Monitor
 from openquake.hazardlib import imt as imt_module
 from openquake.hazardlib.probability_map import ProbabilityMap
 from openquake.hazardlib.scalerel.point import PointMSR
+from openquake.hazardlib.gdem.base import GDEM
 
 pointMSR = PointMSR()
 
@@ -240,15 +241,25 @@ class ContextMaker(object):
     def _make_pnes(self, rupture, sctx, dctx, imtls, trunclevel):
         pne_array = numpy.zeros(
             (len(sctx.sids), len(imtls.array), len(self.gsims)))
-        print(len(sctx.sids), len(imtls.array), len(self.gsims))
+        
         for i, gsim in enumerate(self.gsims):
             dctx_ = dctx.roundup(gsim.minimum_distance)
-            pnos = []  # list of arrays nsites x nlevels
-            for imt in imtls:
-                poes = gsim.get_poes(
-                    sctx, rupture, dctx_,
-                    imt_module.from_string(imt), imtls[imt], trunclevel)
-                pnos.append(rupture.get_probability_no_exceedance(poes))
+            if isinstance(gsim, GDEM):
+                # For the Geotech calculators the outputs are a list
+                # of arrays ordered in terms of the imt order in imtls
+                poes = gsim.get_poes(sctx, rupture, dctx_,
+                                     imtls, trunclevel)
+                pnos = []
+                for poe in poes:
+                    pnos.append(rupture.get_probability_no_exceedance(poe))
+                pne_array[:, :, i] = numpy.concatenate(pnos, axis=1) 
+            else:
+                pnos = []  # list of arrays nsites x nlevels
+                for imt in imtls:
+                    poes = gsim.get_poes(
+                        sctx, rupture, dctx_,
+                        imt_module.from_string(imt), imtls[imt], trunclevel)
+                    pnos.append(rupture.get_probability_no_exceedance(poes))
             pne_array[:, :, i] = numpy.concatenate(pnos, axis=1)
         return pne_array
 

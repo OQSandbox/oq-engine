@@ -25,40 +25,12 @@ import numpy as np
 from collections import OrderedDict
 from scipy.stats import truncnorm
 from openquake.hazardlib.imt import from_string
-from openquake.hazardlib.gsim.base import GMPE
-from openquake.hazardlib.gsim.wrapper import WrapperGMPE
-#from openquake.hazardlib.calc.gmf import GmfComputer
+#from openquake.hazardlib.gsim.base import GMPE
+from openquake.hazardlib.gsim.multi import MultiGMPE
 from openquake.hazardlib import const
 
 
-#class GSIMFComputer(GmfComputer):
-#    """
-#    Adaptation of the `class`:openquake.hazardlib.calc.gmf.GmfComputer
-#    for the case when multiple GSIMs are input, each associated with only
-#    a single intensity measure type
-#    """
-#    def compute(self, gsim_set, num_events, seed=None):
-#        """
-#        :param gsim_set: a dictionary of imts and their required GSIMs 
-#        :param num_events: the number of seismic events
-#        :param seed: a random seed or None
-#        :returns: a 32 bit array of shape (num_imts, num_sites, num_events)
-#        """
-#        try:  # read the seed from self.rupture.rupture if possible
-#            seed = seed or self.rupture.rupture.seed
-#        except AttributeError:
-#            pass
-#        if seed is not None:
-#            np.random.seed(seed)
-#        result = np.zeros(
-#            (len(gsim_set), len(self.sids), num_events), np.float32)
-#        for imti, (imt, gsim) in enumerate(gsim_set.items()):
-#            result[imti] = self._compute(None, gsim, num_events,
-#                                         from_string(imt))
-#        return result
-
-
-class GDEM(GMPE):
+class GDEM(MultiGMPE):
     """
     General base class for a Ground Deformation Estimation Model (GDEM)
     
@@ -71,30 +43,36 @@ class GDEM(GMPE):
     DEFINED_FOR_INTENSITY_MEASURE_COMPONENT = None
     DEFINED_FOR_DEFORMATION_TYPES = set(())
     DEFINED_FOR_STANDARD_DEVIATION_TYPES = set((const.StdDev.TOTAL,))
-    DEFINED_FOR_TECTONIC_REGION_TYPE = None
-    REQUIRES_DISTANCES = set(())
+    REQUIRES_DISTANCES = set()
     REQUIRES_RUPTURE_PARAMETERS = set(("mag",))
-    REQUIRES_SITES_PARAMETERS = set(())
+    REQUIRES_SITES_PARAMETERS = set()
 
-    def __init__(self, gmpe, truncation=3.0, nsample=1000):
-        super().__init__()
-        self.gmpe = gmpe
-        self.imts = list(self.gmpe.gmpes)
-        for imt in self.imts:
-            if not imt.__class__ in\
-                self.gmpe.DEFINED_FOR_INTENSITY_MEASURE_TYPES:
-                raise ValueError("GDEM method %s requires %s, not found in"
-                                 " GMPE set" % (self.__class__.__name__,
-                                                str(imt)))            
-        self.REQUIRES_SITES_PARAMETERS = (
+    def __init__(self, gsim_by_imt, truncation=3.0, nsample=1000):
+        super().__init__(gsim_by_imt)
+        #self.gmpe = gmpe
+        #self.imts = list(self.gmpe.gmpes)
+        #for imt in self.imts:
+        #    if not imt.__class__ in\
+        #        self.gmpe.DEFINED_FOR_INTENSITY_MEASURE_TYPES:
+        #        raise ValueError("GDEM method %s requires %s, not found in"
+        #                         " GMPE set" % (self.__class__.__name__,
+        #                                        str(imt)))            
+        for imt in self.gsim_by_imt:
+            self.REQUIRES_SITES_PARAMETERS = (
                 self.REQUIRES_SITES_PARAMETERS |
-                self.gmpe.REQUIRES_SITES_PARAMETERS)
-        self.REQUIRES_RUPTURE_PARAMETERS = (
+                self.gsim_by_imt[imt].REQUIRES_SITES_PARAMETERS)
+            self.REQUIRES_RUPTURE_PARAMETERS = (
                 self.REQUIRES_RUPTURE_PARAMETERS |
-                self.gmpe.REQUIRES_RUPTURE_PARAMETERS)
-        self.REQUIRES_DISTANCES = (self.REQUIRES_DISTANCES |
-                self.gmpe.REQUIRES_DISTANCES)
+                self.gsim_by_imt[imt].REQUIRES_RUPTURE_PARAMETERS)
+            self.REQUIRES_DISTANCES = (self.REQUIRES_DISTANCES |
+                self.gsim_by_imt[imt].REQUIRES_DISTANCES)
 
+        # Geotechnical hazard requires the definition of an integral of
+        # the expected displacement conditional upon the shaking at the surface
+        # As this is integrated numerically we can pre-calculate the integral
+        # bins according to the specific level of truncation and the number
+        # of samples. In the geotechnical modules the bins and their
+        # probabilities are integrated upon.
         xvals = np.linspace(-truncation, truncation, nsample + 1)
         self.truncnorm_probs = truncnorm.sf(xvals, -truncation, truncation,
                                             loc=0., scale=1.)
@@ -102,9 +80,8 @@ class GDEM(GMPE):
             self.truncnorm_probs[1:]
         self.epsilons = (xvals[:-1] + xvals[1:]) / 2.
 
-
     @abc.abstractmethod
-    def get_probability_failure(self, sctx, rctx, dctx, gsimtls):
+    def get_probability_failure(self, sctx, rctx, dctx):
         """
         Returns the probability of failure
         """
@@ -123,21 +100,22 @@ class GDEM(GMPE):
         Returns the field of displacements
         """
 
-    def get_mean_and_stddevs(self, sctx, rctx, dctx):
+    def get_shaking_mean_and_stddevs(self, sctx, rctx, dctx):
         """
         Returns a dictionary containing the expected mean and standard
         deviations of ground motion for all of the parameters required by the
         model
         """
-        stddev_types = list(self.DEFINED_FOR_STANDARD_DEVIATION_TYPES)
         gsimtls = []
-        for imt, gmpe in self.gmpe.gmpes.items():
-            mean, stddevs = gmpe.get_mean_and_stddevs(sctx, rctx, dctx, imt,
+        stddev_types = list(self.DEFINED_FOR_STANDARD_DEVIATION_TYPES)
+        for imt in self.gsim_by_imt:
+            mean, stddevs = self.get_mean_and_stddevs(sctx, rctx, dctx, 
+                                                      from_string(imt),
                                                       stddev_types)
             gsimls = {"mean": mean}
             for i, stddev_type in enumerate(stddev_types):
                 if not stddev_type in\
-                    gmpe.DEFINED_FOR_STANDARD_DEVIATION_TYPES:
+                    self.gsim_by_imt[imt].DEFINED_FOR_STANDARD_DEVIATION_TYPES:
                     continue
                 gsimls[stddev_type] = stddevs[i]
             gsimtls.append((str(imt), gsimls))

@@ -145,12 +145,11 @@ class HAZUSLiquefaction(GDEM):
     REQUIRES_SITES_PARAMETERS = set(("liquefaction_susceptibility",
                                      "dw", "vs30"))
     
-    def get_probability_failure(self, sctx, rctx, dctx, gsimtls=None):
+    def get_probability_failure(self, sctx, rctx, dctx):
         """
         Returns the probability of failure
         """
-        if not gsimtls:
-            gsimtls = self.get_mean_and_stddevs(sctx, rctx, dctx)
+        gsimtls = self.get_shaking_mean_and_stddevs(sctx, rctx, dctx)
             
         # Get properties that are dependent on rupture and site
         properties = self._setup_properties(sctx, rctx)
@@ -165,7 +164,7 @@ class HAZUSLiquefaction(GDEM):
             # probability for that epsilon multiplied by the probability
             # of the given epsilon
             p_failure += (self.truncnorm_probs[j] *
-                         self.get_failure_model(sctx, gmv, properties))
+                          self.get_failure_model(sctx, gmv, properties))
         return p_failure
 
     def _setup_properties(self, sctx, rctx):
@@ -217,7 +216,7 @@ class HAZUSLiquefaction(GDEM):
         motion
         """
         # Get the mean and standard deviation ground motions
-        gsimtls = self.get_mean_and_stddevs(sctx, rctx, dctx)
+        gsimtls = self.get_shaking_mean_and_stddevs(sctx, rctx, dctx)
         properties = self._setup_properties(sctx, rctx)
         # Get the magnitude and depth correction factors
         # Setup probabilities with zeros
@@ -269,7 +268,6 @@ class HAZUSLiquefaction(GDEM):
                                                    (displacement >= iml))
         # Returns PoEs as a list
         return [poes[imt] for imt in imtls]
-
 
     def _get_gmv_field_location(self):
         """
@@ -431,12 +429,11 @@ class HAZUSLandsliding(GDEM):
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
     REQUIRES_SITES_PARAMETERS = set(("landsliding_susceptibility", "vs30"))
 
-    def get_probability_failure(self, sctx, rctx, dctx, gsimtls=None):
+    def get_probability_failure(self, sctx, rctx, dctx):
         """
         Returns the probability of failure
         """
-        if not gsimtls:
-            gsimtls = self.get_mean_and_stddevs(sctx, rctx, dctx)
+        gsimtls = self.get_shaking_mean_and_stddevs(sctx, rctx, dctx)
         # Get the yield acceleration and map area (i.e. probability of
         # observing slope displacement per unit)
         properties = self._setup_properties(sctx, rctx)
@@ -467,7 +464,7 @@ class HAZUSLandsliding(GDEM):
         Returns the probabilities of exceeding the given level of ground
         motion
         """
-        gsimtls = self.get_mean_and_stddevs(sctx, rctx, dctx)
+        gsimtls = self.get_shaking_mean_and_stddevs(sctx, rctx, dctx)
         #a_c, pma = self._get_ac_map_area(sctx)
         properties = self._setup_properties(sctx, rctx)
         gmv_mean, gmv_sigma = self._get_failure_gmvs(gsimtls)
@@ -509,7 +506,6 @@ class HAZUSLandsliding(GDEM):
                              "but not found in imts")
 
         return [self.imts.index(PGA())]
-        #return [gmfs[self.IMT_ORDER.index("PGA")]]
 
     def get_displacement_field(self, rupture, sitecol, cmaker, num_events=1,
                                truncation_level=None, correlation_model=None):

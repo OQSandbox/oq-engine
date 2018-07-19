@@ -1,3 +1,4 @@
+import unittest
 # -*- coding: utf-8 -*-
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
@@ -15,7 +16,8 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with OpenQuake. If not, see <http://www.gnu.org/licenses/>.
-import unittest
+
+
 import numpy as np
 
 from openquake.hazardlib.source import SimpleFaultSource
@@ -24,16 +26,12 @@ from openquake.hazardlib.geo import Line, Point, SimpleFaultSurface, Mesh
 from openquake.hazardlib.mfd import EvenlyDiscretizedMFD
 from openquake.hazardlib.scalerel import PeerMSR
 from openquake.hazardlib import const
-#from openquake.hazardlib.gsim.wrapper import WrapperGMPE
-#from openquake.hazardlib.contexts import GeotechContextMaker
 from openquake.hazardlib.imt import (PGA, SA, PGV,PGDfLatSpread,
                                      PGDfSettle, PGDfSlope)
 from openquake.hazardlib.site import Site, SiteCollection, site_param_dt
 from openquake.baselib.general import DictArray, groupby, AccumDict
 from openquake.hazardlib.calc.filters import SourceFilter
-#from openquake.hazardlib.calc.hazard_curve import geotech_classical
 from openquake.hazardlib import valid
-
 
 
 def _setup_fault_source():
@@ -89,26 +87,17 @@ def _setup_sites_liquefaction():
         for vs30, hazus_cat, dw in params:
             sites.append({"lon": locn.longitude,
                           "lat": locn.latitude, "vs30": vs30,
-                          "vs30measured"=False, "z1pt0"=48.0, "z2pt5"=0.607,
-                          "hazus_susceptibility"=hazus_cat, "dw"=dw})
-    site_model_dt = numpy.dtype([(p, site_param_dt[p])
-                                 for p in sorted(sites[0])])
-    tuples = [tuple(param[name] for name in site_model_dt.names)
+                          "vs30measured":False, "z1pt0":48.0, "z2pt5":0.607,
+                          "liquefaction_susceptibility":hazus_cat, "dw":dw})
+    site_model_dt = np.dtype([(p, site_param_dt[p])
+                              for p in sorted(sites[0])])
+    tuples = [tuple(site[name] for name in site_model_dt.names)
               for site in sites]
     sites = np.array(tuples, site_model_dt)
-    req_site_params = ("vs30", "liquefactions_susceptibility", "dw")
+    req_site_params = ("vs30", "liquefaction_susceptibility", "dw")
     return SiteCollection.from_points(sites["lon"], sites["lat"],
                                       sitemodel=sites,
                                       req_site_params=req_site_params)
-
-
-#            sites.append(Site(locn, vs30, True, 48.0, 0.607,
-#                              liquefaction_susceptibility=hazus_cat, dw=dw))
-#    return SiteCollection.from_points(lons=sites[:, 0], lats=sites[:, 1],
-#        vs30=sites[:, 2], vs30measured=sites[:, 3].astype(bool),
-#        z1pt0=sites[:, 4], z2pt5=sites[:, 5],
-#        liquefaction_susceptibility=sites[:, 6].astype(int), dw=sites[:, 7],
-#        req_site_params=("vs30, liquefaction_susceptibility", "dw"))
 
 def _setup_sites_landsliding():
     """
@@ -133,58 +122,17 @@ def _setup_sites_landsliding():
     sites = []
     for locn in [point_1, point_2, point_3, point_4]:
         for vs30, hazus_ls_cat in ls_params:
-            sites.append(Site(locn, vs30, True, 48.0, 0.607,
-                              landsliding_susceptibility=hazus_ls_cat))
-    return SiteCollection(sites,
-                          req_site_params("landsliding_susceptibility",))
-
-
-class LiquefactionHAZUSClassicalTestCase(unittest.TestCase):
-    """
-    Tests the HAZUS Liquefaction Calculator
-    """
-    def setUp(self):
-        """
-        """
-        self.source = _setup_fault_source()
-        self.sites = _setup_sites_liquefaction()
-        self.gmpe = WrapperGMPE(gmpes_by_imt={"PGA": "BooreEtAl2014"})
-        self.gsimtls = {"PGDfLatSpread": [0.001, 0.1, 1., 5., 10.],
-                        "PGDfSettle": [0.001, 0.1, 1., 5., 10.]}
-
-    def test_liquefaction_hazus_classical_execution(self):
-        #cmaker = GeotechContextMaker([hazus_liq])
-        # Setup HAZUS Liquefaction GSIM
-        gsims = [HAZUSLiquefaction(gmpe=self.gmpe)]
-        # Setup parameters
-        param = {"imtls": DictArray(self.gsimtls),
-                 "truncation_level": 3.,
-                 "filter_distance": "rrup"}
-        # Execute calculations
-        disp_curves = geotech_classical(
-            [self.source], SourceFilter(self.sites, valid.floatdict("200")),
-            gsims, param)
-
-
-class LandslidingHAZUSClassicalTestCase(unittest.TestCase):
-    """
-    Tests the Hazus landsliding
-    """
-    def setUp(self):
-        """
-        """
-        self.source = _setup_fault_source()
-        self.sites = _setup_sites_landsliding()
-        self.gmpe = WrapperGMPE(gmpes_by_imt={"PGA": "BooreEtAl2014"})
-        self.gsimtls = {"PGDfSlope": [0.001, 0.1, 1., 5., 10.]}
-
-    def test_landsliding_hazus_classical_execution(self):
-        # Setup HAZUS landsliding GSIM
-        gsims = [HAZUSLandsliding(gmpe=self.gmpe)]
-        # Setup parameters
-        param = {"imtls": DictArray(self.gsimtls),
-                 "truncation_level": 3., "filter_distance": "rrup"}
-        # Execute calculations
-        disp_curves = geotech_classical(
-            [self.source], SourceFilter(self.sites, valid.floatdict("200")),
-            gsims, param)
+            sites.append({"lon": locn.longitude,
+                          "lat": locn.latitude, "vs30": vs30,
+                          "vs30measured":False, "z1pt0":48.0, "z2pt5":0.607,
+                          "landsliding_susceptibility": hazus_ls_cat}
+                          )
+    site_model_dt = np.dtype([(p, site_param_dt[p])
+                              for p in sorted(sites[0])])
+    tuples = [tuple(site[name] for name in site_model_dt.names)
+              for site in sites]
+    sites = np.array(tuples, site_model_dt)
+    req_site_params = ("vs30", "landsliding_susceptibility")
+    return SiteCollection.from_points(sites["lon"], sites["lat"],
+                                      sitemodel=sites,
+                                      req_site_params=req_site_params)

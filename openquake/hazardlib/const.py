@@ -48,7 +48,6 @@ class TRT(ConstantContainer):
     VOLCANIC = 'Volcanic'
     GEOTHERMAL = 'Geothermal'
     INDUCED = 'Induced'
-    UNDEFINED = 'Undefined'
 
 
 class IMC(ConstantContainer):

@@ -26,6 +26,7 @@ import inspect
 import importlib
 from collections import OrderedDict
 from openquake.hazardlib.gdem.base import GDEM
+from openquake.hazardlib.gdem.scalar import SlopeDisplacementScalar
 
 
 def get_available_gdems():
@@ -41,6 +42,6 @@ def get_available_gdems():
                 'openquake.hazardlib.gdem.' + modname)
             for cls in mod.__dict__.values():
                 if inspect.isclass(cls) and issubclass(cls, GDEM)\
-                    and cls not in (GDEM,):
+                    and cls not in (GDEM, SlopeDisplacementScalar):
                     gsims[cls.__name__] = cls
     return OrderedDict((k, gsims[k]) for k in sorted(gsims))
