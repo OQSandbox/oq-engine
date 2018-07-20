@@ -62,7 +62,7 @@ from openquake.baselib.performance import Monitor
 from openquake.baselib.parallel import sequential_apply
 from openquake.baselib.general import DictArray, groupby, AccumDict
 from openquake.hazardlib.probability_map import ProbabilityMap
-from openquake.hazardlib.gsim.base import ContextMaker, GeotechContextMaker
+from openquake.hazardlib.gsim.base import ContextMaker
 from openquake.hazardlib.calc.filters import SourceFilter
 from openquake.hazardlib.sourceconverter import SourceGroup
 
@@ -108,60 +108,6 @@ def classical(group, src_filter, gsims, param, monitor=Monitor()):
             etype, err, tb = sys.exc_info()
             msg = '%s (source id=%s)' % (str(err), src.source_id)
             raise etype(msg).with_traceback(tb)
-        if mutex_weight:  # mutex sources
-            weight = mutex_weight[src.source_id]
-            for sid in poemap:
-                pcurve = pmap[group.id].setdefault(sid, 0)
-                pcurve += poemap[sid] * weight
-        elif poemap:
-            for grp_id in src.src_group_ids:
-                pmap[grp_id] |= poemap
-        src_id = src.source_id.split(':', 1)[0]
-        pmap.calc_times[src_id] += numpy.array(
-            [src.weight, len(s_sites), time.time() - t0, 1])
-        # storing the number of contributing ruptures too
-        pmap.eff_ruptures += {grp_id: getattr(poemap, 'eff_ruptures', 0)
-                              for grp_id in src.src_group_ids}
-    if mutex_weight and group.grp_probability is not None:
-        pmap[group.id] *= group.grp_probability
-    return pmap
-
-
-def geotech_classical(group, src_filter, gsims, param, monitor=Monitor()):
-    """
-    Compute the hazard curves for a set of sources belonging to the same
-    tectonic region type for all the GSIMs associated to that TRT.
-    The arguments are the same as in :func:`calc_hazard_curves`, except
-    for ``gsims``, which is a list of GSIM instances.
-
-    :returns:
-        a dictionary {grp_id: pmap} with attributes .grp_ids, .calc_times,
-        .eff_ruptures
-    """
-    if getattr(group, 'src_interdep', None) == 'mutex':
-        mutex_weight = {src.source_id: weight for src, weight in
-                        zip(group.sources, group.srcs_weights)}
-    else:
-        mutex_weight = None
-    grp_ids = set()
-    for src in group:
-        grp_ids.update(src.src_group_ids)
-    maxdist = src_filter.integration_distance
-    imtls = param['imtls']
-    trunclevel = param.get('truncation_level')
-    cmaker = GeotechContextMaker(gsims,
-                                 maxdist,
-                                 param['filter_distance'],
-                                 monitor)
-    pmap = AccumDict({grp_id: ProbabilityMap(len(imtls.array), len(gsims))
-                      for grp_id in grp_ids})
-    # AccumDict of arrays with 4 elements weight, nsites, calc_time, split
-    pmap.calc_times = AccumDict(accum=numpy.zeros(4))
-    pmap.eff_ruptures = AccumDict()  # grp_id -> num_ruptures
-    for src, s_sites in src_filter(group):  # filter now
-        t0 = time.time()
-        indep = group.rup_interdep == 'indep' if mutex_weight else True
-        poemap = cmaker.poe_map(src, s_sites, imtls, trunclevel, indep)
         if mutex_weight:  # mutex sources
             weight = mutex_weight[src.source_id]
             for sid in poemap:

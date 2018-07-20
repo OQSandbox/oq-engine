@@ -27,10 +27,6 @@ from openquake.hazardlib import const
 from openquake.hazardlib.imt import PGDfSettle, PGDfLatSpread, PGA
 
 
-pgdf_settle = PGDfSettle()
-pgdf_spread = PGDfLatSpread()
-
-
 class ZhuEtAl2015Global(HAZUSLiquefaction):
     """
     Implements an adaptation of the HAZUS Liquefaction methodology in which
