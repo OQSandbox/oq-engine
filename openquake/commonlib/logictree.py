@@ -38,14 +38,14 @@ from openquake.baselib import hdf5, node
 from openquake.baselib.general import groupby
 from openquake.baselib.python3compat import raise_
 import openquake.hazardlib.source as ohs
-from openquake.hazardlib.gsim.base import CoeffsTable
+from openquake.hazardlib.gsim.base import CoeffsTable, GMPE
+from openquake.hazardlib.gsim.multi import MultiGMPE
 from openquake.hazardlib.gsim.gmpe_table import GMPETable
 from openquake.hazardlib.imt import from_string
 from openquake.hazardlib import geo, valid, nrml, InvalidFile
 from openquake.hazardlib.sourceconverter import (
     split_coords_2d, split_coords_3d)
 from openquake.hazardlib.gdem import get_available_gdems
-from openquake.hazardlib.gsim.wrapper import WrapperGMPE
 from openquake.baselib.node import (
     node_from_xml, striptag, node_from_elem, Node as N, context)
 
@@ -1362,21 +1362,39 @@ class GsimLogicTree(object):
                     branch_id = branch['branchID']
                     branch_ids.append(branch_id)
                     uncertainty = branch.uncertaintyModel
-                    if isinstance(uncertainty.text, str):
-                        gsim_name = uncertainty.text.strip()
-                        if gsim_name == 'GMPETable':
-                            # a bit hackish: set the GMPE_DIR equal to the
-                            # directory where the gsim_logic_tree file is
-                            GMPETable.GMPE_DIR = os.path.dirname(self.fname)
-                            self.gmpe_tables.add(uncertainty['gmpe_table'])
-                        try:
-                            gsim = valid.gsim(gsim_name, **uncertainty.attrib)
-                        except Exception:
-                            etype, exc, tb = sys.exc_info()
-                            raise_(etype, "%s in file %s" % (exc, self.fname),
-                                   tb)
-                        uncertainty.text = gsim
-                    else:  # already converted GSIM
+                    if uncertainty.text is None:  # expect MultiGMPE
+                        with context(self.fname, uncertainty):    
+                            gsimdict = collections.OrderedDict()
+                            imts = []
+                            for nod in uncertainty.getnodes('gsimByImt'):
+                                kw = nod.attrib.copy()
+                                imt = kw.pop('imt')
+                                imts.append(imt)
+                                gsim_name = kw.pop('gsim')
+                                gsimdict[imt] = self.instantiate(gsim_name, kw)
+                            if len(imts) > len(gsimdict):
+                                raise InvalidLogicTree(
+                                    'Found duplicated IMTs in gsimByImt')
+                            if "gdemModel" in uncertainty.attrib:
+                                # Is a GDEM model
+                                gdem_model = uncertainty["gdemModel"]
+                                kw = uncertainty.attrib.copy()
+                                del(kw["gdemModel"])
+                                if "truncation" in kw:
+                                    kw["truncation"] = valid.positivefloat(
+                                        kw["truncation"])
+                                if "nsample" in kw:
+                                    kw["nsample"] = valid.positiveint(
+                                        kw["nsample"])
+                                gsim = valid.GDEM[gdem_model](
+                                    gsim_by_imt=gsimdict, **kw)
+                            else:
+                                # Is just a MultiGMPE
+                                gsim = MultiGMPE(gsim_by_imt=gsimdict)
+                    elif isinstance(uncertainty.text, str):
+                        uncertainty.text = gsim = self.instantiate(
+                            uncertainty.text.strip(), uncertainty.attrib)
+                    else:  # already converted
                         gsim = uncertainty.text
                     if gsim in self.values[trt]:
                         raise InvalidLogicTree('%s: duplicated gsim %s' %
@@ -1396,6 +1414,23 @@ class GsimLogicTree(object):
         branches.sort(key=lambda b: (b.bset['branchSetID'], b.id))
         # TODO: add an .idx to each GSIM ?
         return trts, branches
+
+    def instantiate(self, gsim_name, kwargs):
+        """
+        :param gsim_name: name of a GSIM class
+        :param kwargs: keyword arguments used to instantiate the GSIM class
+        """
+        if gsim_name == 'GMPETable':
+            # a bit hackish: set the GMPE_DIR equal to the
+            # directory where the gsim_logic_tree file is
+            GMPETable.GMPE_DIR = os.path.dirname(self.fname)
+            self.gmpe_tables.add(kwargs['gmpe_table'])
+        try:
+            gsim = valid.gsim(gsim_name, **kwargs)
+        except Exception:
+            etype, exc, tb = sys.exc_info()
+            raise_(etype, "%s in file %s" % (exc, self.fname), tb)
+        return gsim
 
     def get_gsim_by_trt(self, rlz, trt):
         """
@@ -1454,61 +1489,61 @@ class GsimLogicTree(object):
 
 GDEM = get_available_gdems()
 
-class GdemLogicTree(GsimLogicTree):
-    """
-    """
-    def _build_trts_branches(self):
-        # do the parsing, called at instantiation time to populate .values
-        trts = []
-        branches = []
-        branchsetids = set()
-        for branching_level in self._ltnode:
-            if len(branching_level) > 1:
-                raise InvalidLogicTree(
-                    '%s: Branching level %s has multiple branchsets'
-                    % (self.fname, branching_level['branchingLevelID']))
-            for branchset in branching_level:
-                if branchset['uncertaintyType'] != 'gmpeModel':
-                    raise InvalidLogicTree(
-                        '%s: only uncertainties of type "gmpeModel" '
-                        'are allowed in gmpe logic tree' % self.fname)
-                bsid = branchset['branchSetID']
-                if bsid in branchsetids:
-                    raise InvalidLogicTree(
-                        '%s: Duplicated branchSetID %s' % (self.fname, bsid))
-                else:
-                    branchsetids.add(bsid)
-                trt = branchset.attrib.get('applyToTectonicRegionType')
-                if trt:
-                    trts.append(trt)
-                # NB: '*' is used in scenario calculations to disable filtering
-                effective = (self.tectonic_region_types == ['*'] or
-                             trt in self.tectonic_region_types)
-                weights = []
-                for branch in branchset:
-                    weight = Decimal(branch.uncertaintyWeight.text)
-                    weights.append(weight)
-                    branch_id = branch['branchID']
-                    uncertainty_text = branch.uncertaintyModel.text
-                    # Instantiate GMPE
-                    try:
-                        gsim = WrapperGMPE.from_string(
-                            uncertainty_text.strip())
-                    except Exception:
-                        etype, exc, tb = sys.exc_info()
-                        raise_(etype, "%s in file %s" % (exc, self.fname),
-                               tb)
-                    # Instantiate GDEM
-                    gdem = GDEM[branch.gdemModel.text](gmpe=gsim)
-                    self.values[trt].append(gdem)
-                    bt = BranchTuple(
-                        branchset, branch_id, gdem, weight, effective)
-                    branches.append(bt)
-                assert sum(weights) == 1, weights
-        if len(trts) > len(set(trts)):
-            raise InvalidLogicTree(
-                '%s: Found duplicated applyToTectonicRegionType=%s' %
-                (self.fname, trts))
-        branches.sort(key=lambda b: (b.bset['branchSetID'], b.id))
-        # TODO: add an .idx to each GSIM ?
-        return trts, branches
+#class GdemLogicTree(GsimLogicTree):
+#    """
+#    """
+#    def _build_trts_branches(self):
+#        # do the parsing, called at instantiation time to populate .values
+#        trts = []
+#        branches = []
+#        branchsetids = set()
+#        for branching_level in self._ltnode:
+#            if len(branching_level) > 1:
+#                raise InvalidLogicTree(
+#                    '%s: Branching level %s has multiple branchsets'
+#                    % (self.fname, branching_level['branchingLevelID']))
+#            for branchset in branching_level:
+#                if branchset['uncertaintyType'] != 'gmpeModel':
+#                    raise InvalidLogicTree(
+#                        '%s: only uncertainties of type "gmpeModel" '
+#                        'are allowed in gmpe logic tree' % self.fname)
+#                bsid = branchset['branchSetID']
+#                if bsid in branchsetids:
+#                    raise InvalidLogicTree(
+#                        '%s: Duplicated branchSetID %s' % (self.fname, bsid))
+#                else:
+#                    branchsetids.add(bsid)
+#                trt = branchset.attrib.get('applyToTectonicRegionType')
+#                if trt:
+#                    trts.append(trt)
+#                # NB: '*' is used in scenario calculations to disable filtering
+#                effective = (self.tectonic_region_types == ['*'] or
+#                             trt in self.tectonic_region_types)
+#                weights = []
+#                for branch in branchset:
+#                    weight = Decimal(branch.uncertaintyWeight.text)
+#                    weights.append(weight)
+#                    branch_id = branch['branchID']
+#                    uncertainty_text = branch.uncertaintyModel.text
+#                    # Instantiate GMPE
+#                    try:
+#                        gsim = WrapperGMPE.from_string(
+#                            uncertainty_text.strip())
+#                    except Exception:
+#                        etype, exc, tb = sys.exc_info()
+#                        raise_(etype, "%s in file %s" % (exc, self.fname),
+#                               tb)
+#                    # Instantiate GDEM
+#                    gdem = GDEM[branch.gdemModel.text](gmpe=gsim)
+#                    self.values[trt].append(gdem)
+#                    bt = BranchTuple(
+#                        branchset, branch_id, gdem, weight, effective)
+#                    branches.append(bt)
+#                assert sum(weights) == 1, weights
+#        if len(trts) > len(set(trts)):
+#            raise InvalidLogicTree(
+#                '%s: Found duplicated applyToTectonicRegionType=%s' %
+#                (self.fname, trts))
+#        branches.sort(key=lambda b: (b.bset['branchSetID'], b.id))
+#        # TODO: add an .idx to each GSIM ?
+#        return trts, branches

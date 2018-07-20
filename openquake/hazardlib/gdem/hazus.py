@@ -24,7 +24,7 @@ HAZUS
 import numpy as np
 from scipy.interpolate import interp1d
 from collections import OrderedDict
-from openquake.hazardlib.gdem.base import GDEM # GSIMFComputer
+from openquake.hazardlib.gdem.base import GDEM
 from openquake.hazardlib import const
 from openquake.hazardlib.imt import PGDfSettle, PGDfLatSpread, PGDfSlope, PGA
 from openquake.hazardlib.calc.gmf import GmfComputer
@@ -86,6 +86,7 @@ PMU_LIQ = {0: 0.0, 1: 0.02, 2: 0.05, 3: 0.1, 4: 0.2, 5: 0.25}
 # PGA / PGA_Threshold (PGA_Threshold taken from Table 4.13)
 PGA_THRESHOLD_CLASS = {0: 0.0, 1: 0.26, 2: 0.21, 3: 0.15, 4: 0.12, 5: 0.09}
 
+
 PGA_T_RATIO_LIQ = {
     0: lambda pga: 0.0, 
     1: lambda pga: pga / 0.26,
@@ -94,6 +95,7 @@ PGA_T_RATIO_LIQ = {
     4: lambda pga: pga / 0.12,
     5: lambda pga: pga / 0.09
 }
+
 
 def get_pga_t_ratio(pga, category):
     """
@@ -118,7 +120,7 @@ D_SETTLEMENT = {
 }
 
 
-# List of tuples of lateral spread bounds and formulae
+# List of tuples of lateral spread bounds and formulae taken from Figure 4.9.
 # ((lower limit, upper limit), (m, c))
 # where lower limit and upper limit are the bounding limits of the
 # piecewise linear segment in terms of PGA / PGA_T, and m and c
@@ -130,15 +132,28 @@ D_LATERAL_SPREAD = [((1., 2.), (12., -12.)),
                     ((3., np.inf), (70., -180.))]
 
 
-pgdf_settle = PGDfSettle()
-pgdf_latspread = PGDfLatSpread()
-pgdf_slope = PGDfSlope()
-
-
 class HAZUSLiquefaction(GDEM):
     """
     Implements a probabilistic version of the HAZUS Liquefaction calculator
-    as described in Chapter 4.2.2.1.4 of the HAZUS Technical Manual
+    as described in Chapter 4.2.2.1 of the HAZUS Technical Manual
+
+    Federal Emergency Management Agency (FEMA) (2003) "HAZUS (MH) MR4 Technical
+    Manual - Multi-hazard Loss Estimation Methodology"
+
+    Here the site is characterised by its HAZUS liquefaction susceptibility
+    class from 0 (unliquefiable soil) to 5 (highly liquefiable) and the depth
+    to the ground water. Each susceptibility class then defines a threshold
+    acceleration and a "proportion of map unit" (PMU) susceptible to
+    liquefaction. Liquefaction can only be triggered if the acceleration
+    exceeds the threshold, however, the PMU determines the probability that
+    any individual site experiences liquefaction given that the threshold
+    acceleration is exceeded. The susceptibility class also defines simple
+    predictive models for the expected lateral spread and settlement. These
+    predictive models are reported without uncertainty.
+
+    The probability of failure, and subsequently the probability of exceeding
+    a given level of displacement is determine by integrating over the
+    expected ground motion distribution for a rupture.
     """
     DEFINED_FOR_DEFORMATION_TYPES = set((PGDfSettle, PGDfLatSpread))
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
@@ -178,7 +193,8 @@ class HAZUSLiquefaction(GDEM):
             "kdelta": self._get_displacement_correction_factor(rctx.mag),
             "n": sctx.liquefaction_susceptibility.shape[0]}
 
-        # All scalar quantities per site category can be pre-computed
+        # All scalar quantities per site category can be pre-computed,
+        # partially implementing equation 4-20
         properties["p_fact"] = np.zeros(properties["n"])
         properties["pga_threshold"] = np.zeros(properties["n"])
         properties["settlement"] = np.zeros(properties["n"])
@@ -248,16 +264,19 @@ class HAZUSLiquefaction(GDEM):
             if "PGDfLatSpread" in imtls:
                 # Get PGA Threshold
                 pga_pgat = np.zeros_like(gmv)
-                idx = gmv > 0.0
+                idx = np.logical_and(gmv > 0.0,
+                                     properties["pga_threshold"] > 0.0)
                 pga_pgat[idx] = gmv[idx] / properties["pga_threshold"][idx]
                 displacement = np.zeros_like(pga_pgat)
                 # Calculate lateral spread - based on a set of linear functions
-                # defined by m, c for each pga/pgat value
+                # defined by m, c for each pga/pgat value, as described in
+                # Figure 4.9
                 for (low, high), (m, c) in D_LATERAL_SPREAD:
                     dls_idx = np.logical_and(pga_pgat >= low,
                                              pga_pgat < high)
                     if np.any(dls_idx):
-                        # Calculate predicted displacement
+                        # Calculate predicted displacement according to
+                        # Equation 4-23
                         displacement[dls_idx] = M_PER_INCH *(
                             properties["kdelta"] * (m * pga_pgat[dls_idx] + c))
                 for i, iml in enumerate(imtls["PGDfLatSpread"]):
@@ -273,15 +292,12 @@ class HAZUSLiquefaction(GDEM):
         """
         Finds the location of the necessary IMTs within the IMT list
         In this case only PGA is needed
-
         """
         if not PGA() in self.imts:
             raise ValueError("HAZUS method requires calculation of PGA "
                              "but not found in imts")
 
         return [self.imts.index(PGA())]
-        #imt_locs = [imts.index(PGA())]
-        #return [gmfs[self.IMT_ORDER.index("PGA")]]
         
     def get_displacement_field(self, rupture, sitecol, cmaker, num_events=1,
                                truncation_level=None, correlation_model=None):
@@ -375,24 +391,30 @@ class HAZUSLiquefaction(GDEM):
     
     def _get_displacement_correction_factor(self, mag):
         """
-        Returns the displacement correction Kdelta
+        Returns the displacement correction Kdelta (Equation 4-21)
         """
         return 0.0086 * (mag ** 3.) - 0.0914 * (mag ** 2.) +\
             0.4698 * mag - 0.9835
 
 
+# HAZUS defined critical accelerations for the slope displacement
+# (Table 4.17)
 SLOPE_CRITICAL_ACCELERATIONS = {
     0: np.inf, 1: 0.6, 2: 0.5, 3: 0.4, 4: 0.35, 5: 0.3,
     6: 0.25, 7: 0.2, 8: 0.15, 9: 0.1, 10: 0.05
 }
 
 
+# HAZUS defined probability of having a landslide-susceptible deposit
+# (Table 4.18)
 LANDSLIDING_AREA = {
     0: 0.0, 1: 0.01, 2: 0.02, 3: 0.03, 4: 0.05, 5: 0.08,
     6: 0.1, 7: 0.15, 8: 0.2, 9: 0.25, 10: 0.3
 }
 
 
+# Upper bound of displacement factor from HAZUS Figure 4.14 (retrieved by
+# digitising the figure)
 UPPER_BOUND = np.array([[0.10, 40.11421158253171],
                         [0.20, 18.73304150352677],
                         [0.30, 10.659256441146821],
@@ -403,10 +425,13 @@ UPPER_BOUND = np.array([[0.10, 40.11421158253171],
                         [0.80, 0.20962887837169294],
                         [0.90, 0.04865594982811198]])
 
+
 F_UB = interp1d(UPPER_BOUND[:, 0], np.log10(UPPER_BOUND[:, 1]),
                 kind='linear', fill_value="extrapolate")
 
 
+# Lower bound of displacement factor from HAZUS Figure 4.14 (retrieved by
+# digitising the figure)
 LOWER_BOUND = np.array([[0.10, 22.515331794940273],
                         [0.20, 11.518267840625688],
                         [0.30, 6.357764958836381],
@@ -424,6 +449,21 @@ F_LB = interp1d(LOWER_BOUND[:, 0], np.log10(LOWER_BOUND[:, 1]),
 
 class HAZUSLandsliding(GDEM):
     """
+    Implements the procedure for assessing the probability of slope
+    displacement, and the probability of displacement exceeding a given
+    level, adapting the approach described in section 4.2.2.2 of the HAZUS
+    Technical Manual
+
+    The methodology requires the definition of a landsliding susceptibility
+    category, which in turn then assigns a critical acceleration (g) and
+    proportion of mapped unit to each category. Landsliding can only occur
+    when transient ground acceleration (PGA) exceeds the yield acceleration.
+    However, the probability of displacement of any given site for which
+    transient acceleration exceeds yield acceleration is described by the PMU.
+    An expected displacement factor is given in the methodology to predict
+    the amount of displacement from the shaking. This is reported with some
+    uncertaintly, albeit as a uniform distribution between a lower and upper
+    bound.
     """
     DEFINED_FOR_DEFORMATION_TYPES = set((PGDfSlope,))
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
@@ -468,7 +508,7 @@ class HAZUSLandsliding(GDEM):
         #a_c, pma = self._get_ac_map_area(sctx)
         properties = self._setup_properties(sctx, rctx)
         gmv_mean, gmv_sigma = self._get_failure_gmvs(gsimtls)
-        poes = np.zeros([len(sctx.landsliding_susceptibility),
+        poes = np.zeros([len(properties["a_c"]),
                          len(imtls["PGDfSlope"])])
         n_cycles = self._get_number_cycles(rctx.mag)
         for j, epsilon in enumerate(self.epsilons):
@@ -510,7 +550,7 @@ class HAZUSLandsliding(GDEM):
     def get_displacement_field(self, rupture, sitecol, cmaker, num_events=1,
                                truncation_level=None, correlation_model=None):
         """
-        Returns the field of displacements
+        Returns the field of displacements (m) and ground motion values
         """
         gmf_loc = self._get_gmv_field_location()
         # Gets the ground motion fields
@@ -552,7 +592,7 @@ class HAZUSLandsliding(GDEM):
         # to be uniformly distributed
         e_d_ub, e_d_lb = self._get_expected_displacement_factor(a_c_ais)
         # Final displacement sampling uniformly between the upper and
-        # lower bound displacement factors
+        # lower bound displacement factors - as described by Equation 4-25
         displacement[0][mask] = M_PER_INCH * n_cycles * gmv[mask] *\
             np.random.uniform(e_d_lb, e_d_ub, a_c_ais.shape)
         return displacement, gmfs
@@ -591,7 +631,27 @@ class HAZUSLandsliding(GDEM):
     
     def _get_number_cycles(self, mag):
         """
-        Returns the number of cycles
+        Returns the number of cycles given the magnitude (Equation 4-26)
         """
         return 0.3419 * (mag ** 3.) - 5.5214 * (mag ** 2.) + 33.6154 * mag -\
             70.7692
+
+
+class HAZUSLandslidingKy(HAZUSLandsliding):
+    """
+    Variant of HAZUS Landsliding in which the yield acceleration is defined
+    explicitly, rather than inferred from the susceptibility category
+    """
+    REQUIRES_SITES_PARAMETERS = set(("yield_acceleration", "vs30"))
+    def _setup_properties(self, sctx, rctx):
+        """
+        For the site category returns the critical accelerations and
+        landsliding area
+        """
+
+        properties = {"a_c": np.copy(sctx.yield_acceleration),
+                      "n": sctx.yield_acceleration.shape[0]}
+        properties["a_c"][properties["a_c"] <= 0.0] = np.inf
+        # Implies proportion of landsliding area susceptible to movement is 1
+        properties["pma"] = np.ones_like(properties["a_c"])
+        return properties

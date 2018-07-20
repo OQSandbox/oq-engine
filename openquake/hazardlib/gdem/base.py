@@ -25,7 +25,6 @@ import numpy as np
 from collections import OrderedDict
 from scipy.stats import truncnorm
 from openquake.hazardlib.imt import from_string
-#from openquake.hazardlib.gsim.base import GMPE
 from openquake.hazardlib.gsim.multi import MultiGMPE
 from openquake.hazardlib import const
 
@@ -47,16 +46,8 @@ class GDEM(MultiGMPE):
     REQUIRES_RUPTURE_PARAMETERS = set(("mag",))
     REQUIRES_SITES_PARAMETERS = set()
 
-    def __init__(self, gsim_by_imt, truncation=3.0, nsample=1000):
+    def __init__(self, gsim_by_imt, truncation=6.0, nsample=100):
         super().__init__(gsim_by_imt)
-        #self.gmpe = gmpe
-        #self.imts = list(self.gmpe.gmpes)
-        #for imt in self.imts:
-        #    if not imt.__class__ in\
-        #        self.gmpe.DEFINED_FOR_INTENSITY_MEASURE_TYPES:
-        #        raise ValueError("GDEM method %s requires %s, not found in"
-        #                         " GMPE set" % (self.__class__.__name__,
-        #                                        str(imt)))            
         for imt in self.gsim_by_imt:
             self.REQUIRES_SITES_PARAMETERS = (
                 self.REQUIRES_SITES_PARAMETERS |
@@ -120,27 +111,3 @@ class GDEM(MultiGMPE):
                 gsimls[stddev_type] = stddevs[i]
             gsimtls.append((str(imt), gsimls))
         return OrderedDict(gsimtls)
-
-
-#        self.gmpe_set = OrderedDict([])
-#        self.stddev_types = OrderedDict([])
-#        if not len(gmpe_set):
-#            raise ValueError("Dictionary of Ground Motion Models Must be Defined")
-#        for imt in gmpe_set:
-#            self.gmpe_set[imt] = gmpe_set[imt]()
-#            self.DEFINED_FOR_INTENSITY_MEASURE_TYPES = \
-#                self.DEFINED_FOR_INTENSITY_MEASURE_TYPES.union(
-#                    self.gmpe_set[imt].DEFINED_FOR_INTENSITY_MEASURE_TYPES)
-#            self.REQUIRES_DISTANCES = self.REQUIRES_DISTANCES.union(
-#                self.gmpe_set[imt].REQUIRES_DISTANCES)
-#            self.REQUIRES_RUPTURE_PARAMETERS = self.REQUIRES_RUPTURE_PARAMETERS.union(
-#                self.gmpe_set[imt].REQUIRES_RUPTURE_PARAMETERS)
-#            self.REQUIRES_SITES_PARAMETERS = self.REQUIRES_SITES_PARAMETERS.union(
-#                self.gmpe_set[imt].REQUIRES_SITES_PARAMETERS)
-#            self.stddev_types[imt] = []
-#            for stddev_type in\
-#                self.gmpe_set[imt].DEFINED_FOR_STANDARD_DEVIATION_TYPES:
-#                self.stddev_types[imt].append(stddev_type)
-        # Get discrete truncated normal probability distribution
-
-

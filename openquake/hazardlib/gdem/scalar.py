@@ -19,6 +19,7 @@
 
 import numpy as np
 from scipy.interpolate import interp1d
+from scipy.stats import norm
 from collections import OrderedDict
 from openquake.hazardlib.gdem.base import GDEM
 from openquake.hazardlib import const
@@ -26,12 +27,22 @@ from openquake.hazardlib.imt import (PGDfSettle, PGDfLatSpread, PGDfSlope,
                                      PGA, PGV, IA)
 
 
+# Some models return displacement in cm - need to convert to m
 CM2M = -np.log(100.0)
 
 
 class SlopeDisplacementScalar(GDEM):
     """
+    Common class for all forms of slipe displacement models that are
+    conditioned upon a single intensity measure (or on a single IM plus
+    a property of the rupture or site)
 
+    In this case the mean and standard deviation of the ground motion are
+    numerically integrated over, with each IML then used as the conditioning
+    value of the empirical displacement model. The probability of exceeding
+    a specific level of displacement conditional upon the shaking IML is
+    determined from the mean and standard deviation of the empirical
+    displacement model
     """
     DEFINED_FOR_DEFORMATION_TYPES = set((PGDfSlope,))
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
@@ -43,7 +54,12 @@ class SlopeDisplacementScalar(GDEM):
         For the site category returns the critical accelerations and
         landsliding area
         """
-        return {"a_c": sctx.yield_acceleration}
+      
+        k_y = np.copy(sctx.yield_acceleration)
+        # If yield acceleration is less than or equal to zero then assume
+        # no displacement is possible
+        k_y[k_y <= 0.0] = np.inf
+        return {"a_c": k_y}
 
     def _get_failure_gmvs(self, gsimtls):
         """
@@ -53,7 +69,7 @@ class SlopeDisplacementScalar(GDEM):
         """
         means = []
         stddevs = []
-        for imt in IMT_ORDER:
+        for imt in self.IMT_ORDER:
             means.append(gsimtls[imt]["mean"])
             stddevs.append(gsimtls[imt][const.StdDev.TOTAL])
         return means, stddevs
@@ -63,7 +79,7 @@ class SlopeDisplacementScalar(GDEM):
         Returns the probability of failure - in this case any ground motions
         exceeding yield acceleration have a probability of failure of 1.0
         """
-        gsimtls = self.get_mean_and_stddevs(sctx, rctx, dctx)
+        gsimtls = self.get_shaking_mean_and_stddevs(sctx, rctx, dctx)
         properties = self._setup_properties(sctx, rctx)
         gmv_mean, gmv_sigma = self._get_failure_gmvs(gsimtls)
         p_failure = np.zeros_like(properties["a_c"])
@@ -82,11 +98,11 @@ class SlopeDisplacementScalar(GDEM):
         Returns the probabilities of exceeding the given level of ground
         motion
         """
-        gsimtls = self.get_mean_and_stddevs(sctx, rctx, dctx)
+        gsimtls = self.get_shaking_mean_and_stddevs(sctx, rctx, dctx)
         properties = self._setup_properties(sctx, rctx)
         gmv_mean, gmv_sigma = self._get_failure_gmvs(gsimtls)
-        poes = np.zeros([len(sctx.vs30),
-                         len(imtls[pgdf_slope])])
+        poes = np.zeros([len(properties["a_c"]),
+                         len(imtls["PGDfSlope"])])
         for j, epsilon in enumerate(self.epsilons):
             gmv = np.exp(gmv_mean[0] + epsilon * gmv_sigma[0])
             # Get probability of failure
@@ -95,14 +111,13 @@ class SlopeDisplacementScalar(GDEM):
                 # Nothing exceeding critical acceleration
                 continue
             # Get displacement
-            mean_disp, [stddevs] = self.get_mean_displacement(sctx, rctx, dctx,
-                                                              gmv, properties,
-                                                              idx)
-            for i, iml in enumerate(imtls[pgdf_slope]):
+            mean_disp, [stddevs] = self.get_displacement(sctx, rctx, dctx,
+                                                         gmv, properties, idx)
+            for i, iml in enumerate(imtls["PGDfSlope"]):
                 poes[idx, i] += (
                     norm.sf(np.log(iml), loc=mean_disp, scale=stddevs) * 
                     self.truncnorm_probs[j])
-        return poes
+        return [poes]
 
     def get_displacement(self, sctx, rctx, dctx, gmv, properties, idx):
         """
@@ -113,7 +128,7 @@ class SlopeDisplacementScalar(GDEM):
 
     def _get_gmv_field_location(self, gmfs):
         """
-        Get the ground motion values needed for the field - in this case PGA
+        Get the ground motion values needed for the field.
         """
         req_imt = from_string(self.IMT_ORDER[0])
         if not req_imt in self.imts:
@@ -126,7 +141,10 @@ class SlopeDisplacementScalar(GDEM):
     def get_displacement_field(self, rupture, sitecol, cmaker, num_events=1,
                                truncation_level=None, correlation_model=None):
         """
-
+        Returns a field of expected displacements and the accompanying
+        ground motions. Samples a GMF initially and for those sites for which
+        the GMF exceeds the yield acceleration then the displacement is
+        sampled from the empricial model
         """
         # Gets the ground motion fields
         gmf_loc = self._get_gmv_field_location()
@@ -160,7 +178,11 @@ class SlopeDisplacementScalar(GDEM):
 
 class Jibson2007PGA(SlopeDisplacementScalar):
     """
-    Jibson et al., 2007 Eq. 6
+    Implements the scalar empirical slope displacement model of Jibson (2007)
+    for the case that only the peak ground acceleration (PGA) is required.
+
+    Jibson R.W. (2007) "Regression models for estimating coseismic landslide
+    displacement", Engineering Geology 91: 209 - 218
     """
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
     IMT_ORDER = ["PGA",]
@@ -180,7 +202,9 @@ class Jibson2007PGA(SlopeDisplacementScalar):
 
 class Jibson2007PGAMag(SlopeDisplacementScalar):
     """
-    Jibson et al., 2007 Eq. 7
+    Implements the scalar empirical slope displacement model of Jibson (2007)
+    for the case that both peak ground acceleration (PGA) and magnitude are
+    required.
     """
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
     IMT_ORDER = ["PGA",]
@@ -200,7 +224,8 @@ class Jibson2007PGAMag(SlopeDisplacementScalar):
 
 class Jibson2007Ia(SlopeDisplacementScalar):
     """
-    Jibson et al., 2007 Eq. 7
+    Implements the scalar empirical slope displacement model of Jibson (2007)
+    for the case that only the Arias Intensity (IA) is required.
     """
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((IA,))
     IMT_ORDER = ["IA",]
@@ -208,7 +233,7 @@ class Jibson2007Ia(SlopeDisplacementScalar):
     def get_displacement(self, sctx, rctx, dctx, gmv, properties, idx):
         """
         Returns the expected displacement and standard deviation of Jibson
-        (2007) equation (7)
+        (2007) equation (9)
         """
         mean = 2.401 * np.log(gmv[idx]) -\
             3.481 * np.log(properties["a_c"][idx]) - 3.230
@@ -219,7 +244,13 @@ class Jibson2007Ia(SlopeDisplacementScalar):
 
 class FotopoulouPitilakis2015PGV(SlopeDisplacementScalar):
     """
-    Fotopoulou & Pitilakis PGV only model - Equation 8
+    Implements the scalar form of the empirical predictive relations for
+    seismically induced slope displacement of Fotopoulou & Pitilakis (2015)
+    for the case that only PGV and yield acceleration is required.
+
+    Fotopoulou S. D. & Pitilakis K. D. (2015) "Predictive relationships for
+    seismically induced slope displacements using numerical analysis results".
+    Bulletin of Earthquake Engineering, 13: 3207 - 3238
     """
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGV,))
     IMT_ORDER = ["PGV",]
@@ -238,6 +269,9 @@ class FotopoulouPitilakis2015PGV(SlopeDisplacementScalar):
 
 class FotopoulouPitilakis2015PGA(SlopeDisplacementScalar):
     """
+    Implements the scalar form of the empirical predictive relations for
+    seismically induced slope displacement of Fotopoulou & Pitilakis (2015)
+    for the case that only PGA is required.
     """
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
     IMT_ORDER = ["PGA",]
@@ -245,7 +279,7 @@ class FotopoulouPitilakis2015PGA(SlopeDisplacementScalar):
     def get_displacement(self, sctx, rctx, dctx, gmv, properties, idx):
         """
         Returns the expected displacement and standard deviation of Fotopoulou
-        & Pitilakis (2015) equation 10
+        & Pitilakis (2015) equation 9
         """
         a_c = properties["a_c"][idx]
         mean = -2.965 + 2.127 * np.log(gmv[idx]) - 6.583 * a_c +\
@@ -256,14 +290,18 @@ class FotopoulouPitilakis2015PGA(SlopeDisplacementScalar):
 
 class FotopoulouPitilakis2015Ky(SlopeDisplacementScalar):
     """
+    Implements the scalar form of the empirical predictive relations for
+    seismically induced slope displacement of Fotopoulou & Pitilakis (2015)
+    for the case that only PGA and the ratio of yield acceleration to PGA is
+    required
     """
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
-    INT_ORDER = ["PGA",]
+    IMT_ORDER = ["PGA",]
 
     def get_displacement(self, sctx, rctx, dctx, gmv, properties, idx):
         """
         Returns the expected displacement and standard deviation of Fotopoulou
-        & Pitilakis (2015) equation 9
+        & Pitilakis (2015) equation 10
         """
         a_c = properties["a_c"][idx]
         mean = -10.246 - 2.165 * np.log(a_c / gmv[idx]) + 7.844 * a_c +\
@@ -274,9 +312,16 @@ class FotopoulouPitilakis2015Ky(SlopeDisplacementScalar):
 
 class RathjeSaygili2009PGA(SlopeDisplacementScalar):
     """
+    Implements the scalar empirical predictive model for earthquake-induced
+    sliding displacements presented by Rathje & Saygili (2009) dependent
+    only upon PGA
+
+    Rathje, E. M. and Saygili, G. (2009) Probabilistic Assessment of
+    Earthquake-Induced Sliding Displacements of Natural Slopes, Bulletin of the
+    New Zealand Society for Earthquake Engineering, 42(1): 18 - 27
     """
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
-    INT_ORDER = ["PGA",]
+    IMT_ORDER = ["PGA",]
 
     def get_displacement(self, sctx, rctx, dctx, gmv, properties, idx):
         """
@@ -292,4 +337,3 @@ class RathjeSaygili2009PGA(SlopeDisplacementScalar):
         stddevs = 0.732 + 0.789 * ac_ratio - 0.539 * (ac_ratio ** 2.)
         # Convert mean from cm to m
         return mean + CM2M, [stddevs]
-

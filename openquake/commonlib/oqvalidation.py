@@ -295,6 +295,18 @@ class OqParam(valid.ParamSet):
         """
         imts = set('SA' if imt.startswith('SA') else imt for imt in self.imtls)
         for gsim in gsims:
+            if hasattr(gsim, "DEFINED_FOR_DEFORMATION_TYPES"):
+                restrict_imts = gsim.DEFINED_FOR_DEFORMATION_TYPES
+                if restrict_imts:
+                    names = set(cls.__name__ for cls in restrict_imts)
+                    invalid_imts = ', '.join(imts - names)
+                    if invalid_imts:
+                        raise ValueError(
+                            'The IMT %s is not accepted by the GDEM %s' %
+                            (invalid_imts, gsim))
+                # Only consider the GDEMS for now - so continue after check
+                continue
+
             restrict_imts = gsim.DEFINED_FOR_INTENSITY_MEASURE_TYPES
             if restrict_imts:
                 names = set(cls.__name__ for cls in restrict_imts)

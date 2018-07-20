@@ -99,6 +99,42 @@ def _setup_sites_liquefaction():
                                       sitemodel=sites,
                                       req_site_params=req_site_params)
 
+
+def _setup_sites_liquefaction_zhu():
+    """
+    Returns a collection of sites for liquefaction hazard analysis using the
+    HAZUS method
+    """
+    
+    point_1 = Point(-64.98651, -0.15738)
+    point_2 = Point(-64.77466, -0.45686)
+    point_3 = Point(-64.92747, -0.38363)
+    point_4 = Point(-65.05396, -0.17088)
+    params = [[800., 0, 100., 0.0],
+              [600., 1, 50., 1.0],
+              [400., 2, 50., 2.0],
+              [300., 3, 20., 5.0],
+              [200., 4, 20., 7.0],
+              [150., 5, 20., 10.0],
+              [150., 5, 5., 15.0]]
+    sites = []
+    for locn in [point_1, point_2, point_3, point_4]:
+        for vs30, hazus_cat, dw, cti in params:
+            sites.append({"lon": locn.longitude,
+                          "lat": locn.latitude, "vs30": vs30,
+                          "vs30measured":False, "z1pt0": 48.0, "z2pt5": 0.607,
+                          "liquefaction_susceptibility": hazus_cat, "dw": dw,
+                          "cti": cti})
+    site_model_dt = np.dtype([(p, site_param_dt[p])
+                              for p in sorted(sites[0])])
+    tuples = [tuple(site[name] for name in site_model_dt.names)
+              for site in sites]
+    sites = np.array(tuples, site_model_dt)
+    req_site_params = ("vs30", "liquefaction_susceptibility", "dw", "cti")
+    return SiteCollection.from_points(sites["lon"], sites["lat"],
+                                      sitemodel=sites,
+                                      req_site_params=req_site_params)
+
 def _setup_sites_landsliding():
     """
     Returns a collections of sites at four different locations with different
@@ -133,6 +169,38 @@ def _setup_sites_landsliding():
               for site in sites]
     sites = np.array(tuples, site_model_dt)
     req_site_params = ("vs30", "landsliding_susceptibility")
+    return SiteCollection.from_points(sites["lon"], sites["lat"],
+                                      sitemodel=sites,
+                                      req_site_params=req_site_params)
+
+def _setup_sites_yield_accel():
+    """
+    Returns a collection of sites (at four different locations) with
+    different yield acceleration properties
+    """
+    ls_params = [[800., 1.0],
+                 [600., 0.9],
+                 [400., 0.8],
+                 [300., 0.6],
+                 [200., 0.4],
+                 [150., 0.0]]
+    point_1 = Point(-64.98651, -0.15738)
+    point_2 = Point(-64.77466, -0.45686)
+    point_3 = Point(-64.92747, -0.38363)
+    point_4 = Point(-65.05396, -0.17088)
+    sites = []
+    for locn in [point_1, point_2, point_3, point_4]:
+        for vs30, k_y in ls_params:
+            sites.append({"lon": locn.longitude,
+                          "lat": locn.latitude, "vs30": vs30,
+                          "vs30measured":False, "z1pt0": 48.0, "z2pt5": 0.607,
+                          "yield_acceleration": k_y})
+    site_model_dt = np.dtype([(p, site_param_dt[p])
+                              for p in sorted(sites[0])])
+    tuples = [tuple(site[name] for name in site_model_dt.names)
+              for site in sites]
+    sites = np.array(tuples, site_model_dt)
+    req_site_params = ("vs30", "yield_acceleration")
     return SiteCollection.from_points(sites["lon"], sites["lat"],
                                       sitemodel=sites,
                                       req_site_params=req_site_params)

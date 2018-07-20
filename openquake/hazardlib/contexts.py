@@ -24,7 +24,7 @@ from openquake.baselib.performance import Monitor
 from openquake.hazardlib import imt as imt_module
 from openquake.hazardlib.probability_map import ProbabilityMap
 from openquake.hazardlib.scalerel.point import PointMSR
-from openquake.hazardlib.gdem.base import GDEM
+#from openquake.hazardlib.gdem.base import GDEM
 
 pointMSR = PointMSR()
 
@@ -244,7 +244,7 @@ class ContextMaker(object):
         
         for i, gsim in enumerate(self.gsims):
             dctx_ = dctx.roundup(gsim.minimum_distance)
-            if isinstance(gsim, GDEM):
+            if hasattr(gsim, "DEFINED_FOR_DEFORMATION_TYPES"):
                 # For the Geotech calculators the outputs are a list
                 # of arrays ordered in terms of the imt order in imtls
                 poes = gsim.get_poes(sctx, rupture, dctx_,

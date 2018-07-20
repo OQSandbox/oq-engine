@@ -33,24 +33,36 @@ pgdf_spread = PGDfLatSpread()
 
 class ZhuEtAl2015Global(HAZUSLiquefaction):
     """
-    Implements a probabilistic version of the HAZUS Liquefaction calculator
-    as described in Chapter 4.2.2.1.4 of the HAZUS Technical Manual
+    Implements an adaptation of the HAZUS Liquefaction methodology in which
+    the probability of liquefaction is determined via the empirical model of
+    Zhu et al. (2015)
+
+    Zhu, J., Daley, D., Baise, L. G., Thompson, E., Wald, D. J. and
+    Knudsen, K. L. (2015) "A Geospatial Liquefaction Model for Rapid Response
+    and Loss Estimation". Earthquake Spectra, 31(3): 1813 - 1837
+
+    Implemented herein is the "Global" model (from pooled data from the 1995
+    Kobe and 2011 Christchurch earthquakes), which is dependent upon
+    the ground shaking (PGA), Vs30 and the compound topographic index (CTI)
+
+    The Zhu et al. (2015) methods describe only the probability of failure.
+    Therefore it remains necessary to adopt the HAZUS approach to describe
+    the expected lateral spread and settlement; hence the HAZUS liquefaction
+    susceptibility category is still required for this methodology.
     """
     DEFINED_FOR_DEFORMATION_TYPES = set((PGDfSettle, PGDfLatSpread))
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
 
-    # Needs all HAZUS attributes (liquefaction susceptibility and dw,
-    # as well as compound topographic index (CTI)
+    # Needs all HAZUS attributes (liquefaction susceptibility and dw),
+    # as well as vs30 and compound topographic index (CTI)
     REQUIRES_SITES_PARAMETERS = set(("liquefaction_susceptibility",
                                      "dw", "cti", "vs30"))
 
     def get_failure_model(self, sctx, gmv, properties):
         """
-        Returns the probability of failure given the ground motion values,
-        the site properties and the epsilon
+        Returns the probability of failure given the ground motion values and
+        the site properties from Table 4 ("Global model") and equation 2.
         """
         model = 24.10 + 2.067 * np.log(gmv) + 0.355 * sctx.cti +\
             -4.784 * np.log(sctx.vs30)
         return 1. / (1.0 + np.exp(model))
-
-

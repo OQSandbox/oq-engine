@@ -430,76 +430,76 @@ class GmfGetter(object):
         return res
 
 
-class DspfGetter(GmfGetter):
-    """
-    Extension to the GmfGetter to account for geotechnical hazards, i.e.
-    permanent ground displacements
-    """
-    CMAKER = GeotechContextMaker
-    COMPUTER = calc.gmf.GeotechFieldComputer
-
-    def init(self):
-        super().init()
-        # Initiate a displacement field data object. Depending on whether
-        # liquefaction or slope displacement is being calculated there may be
-        # two or one imtls respectively
-        if "PGDfLatSpread" in self.oqparam.intensity_measure_types_and_levels\
-            and "PGDfSettle" in self.oqparam.intensity_measure_types_and_levels:
-            self.dispdata = AccumDict(accum=numpy.zeros(3, F32))
-        else:
-            self.dispdata = AccumDict(accum=numpy.zeros(2, F32))
-
-    def gen_gmv(self):
-        """
-        Compute the GMFs for the given realization and populate the .gmdata
-        array. Yields tuples of the form (sid, eid, imti, gmv).
-        """
-        sample = 0  # in case of sampling the realizations have a corresponding
-        # sample number from 0 to the number of samples of the given src model
-        for gs in self.rlzs_by_gsim:  # OrderedDict
-            rlzs = self.rlzs_by_gsim[gs]
-            for computer in self.computers:
-                rup = computer.rupture
-                sids = computer.sids
-                if self.samples > 1:
-                    # events of the current slice of realizations
-                    all_eids = [get_array(rup.events, sample=s)['eid']
-                                for s in range(sample, sample + len(rlzs))]
-                else:
-                    all_eids = [rup.events['eid']] * len(rlzs)
-                num_events = sum(len(eids) for eids in all_eids)
-                # NB: the trick for performance is to keep the call to
-                # compute.compute outside of the loop over the realizations
-                # it is better to have few calls producing big arrays
-                disp_array, array = computer.compute(gs, num_events)
-                disp_array = disp_array.transpose(1, 0, 2)
-                array = array.transpose(1, 0, 2)
-                # shape (N, I, E)
-                for i, miniml in enumerate(self.min_iml):  # gmv < minimum
-                    arr = array[:, i, :]
-                    arr[arr < miniml] = 0
-                n = 0
-                for r, rlzi in enumerate(rlzs):
-                    e = len(all_eids[r])
-                    gmdata = self.gmdata[rlzi]
-                    dispdata = self.dispdata[rlzi]
-                    gmdata[-1] += e  # increase number of events
-                    dispdata[-1] += e
-                    for ei, eid in enumerate(all_eids[r]):
-                        gmf = array[:, :, n + ei]  # shape (N, I)
-                        tot = gmf.sum(axis=0)  # shape (I,)
-                        for i, val in enumerate(tot):
-                            gmdata[i] += val
-                        dispf = disp_array[:, :, n + ei]
-                        disp_tot = dispf.sum(axis=0)
-                        if not disp_tot.sum() and not tot.sum():
-                            continue
-                         
-                        for sid, gmv, dispv in zip(sids, gmf, dispf):
-                            if gmv.sum():
-                                yield rlzi, sid, eid, gmv, dispv
-                    n += e
-            sample += len(rlzs)
+#class DspfGetter(GmfGetter):
+#    """
+#    Extension to the GmfGetter to account for geotechnical hazards, i.e.
+#    permanent ground displacements
+#    """
+#    CMAKER = GeotechContextMaker
+#    COMPUTER = calc.gmf.GeotechFieldComputer
+#
+#    def init(self):
+#        super().init()
+#        # Initiate a displacement field data object. Depending on whether
+#        # liquefaction or slope displacement is being calculated there may be
+#        # two or one imtls respectively
+#        if "PGDfLatSpread" in self.oqparam.intensity_measure_types_and_levels\
+#            and "PGDfSettle" in self.oqparam.intensity_measure_types_and_levels:
+#            self.dispdata = AccumDict(accum=numpy.zeros(3, F32))
+#        else:
+#            self.dispdata = AccumDict(accum=numpy.zeros(2, F32))
+#
+#    def gen_gmv(self):
+#        """
+#        Compute the GMFs for the given realization and populate the .gmdata
+#        array. Yields tuples of the form (sid, eid, imti, gmv).
+#        """
+#        sample = 0  # in case of sampling the realizations have a corresponding
+#        # sample number from 0 to the number of samples of the given src model
+#        for gs in self.rlzs_by_gsim:  # OrderedDict
+#            rlzs = self.rlzs_by_gsim[gs]
+#            for computer in self.computers:
+#                rup = computer.rupture
+#                sids = computer.sids
+#                if self.samples > 1:
+#                    # events of the current slice of realizations
+#                    all_eids = [get_array(rup.events, sample=s)['eid']
+#                                for s in range(sample, sample + len(rlzs))]
+#                else:
+#                    all_eids = [rup.events['eid']] * len(rlzs)
+#                num_events = sum(len(eids) for eids in all_eids)
+#                # NB: the trick for performance is to keep the call to
+#                # compute.compute outside of the loop over the realizations
+#                # it is better to have few calls producing big arrays
+#                disp_array, array = computer.compute(gs, num_events)
+#                disp_array = disp_array.transpose(1, 0, 2)
+#                array = array.transpose(1, 0, 2)
+#                # shape (N, I, E)
+#                for i, miniml in enumerate(self.min_iml):  # gmv < minimum
+#                    arr = array[:, i, :]
+#                    arr[arr < miniml] = 0
+#                n = 0
+#                for r, rlzi in enumerate(rlzs):
+#                    e = len(all_eids[r])
+#                    gmdata = self.gmdata[rlzi]
+#                    dispdata = self.dispdata[rlzi]
+#                    gmdata[-1] += e  # increase number of events
+#                    dispdata[-1] += e
+#                    for ei, eid in enumerate(all_eids[r]):
+#                        gmf = array[:, :, n + ei]  # shape (N, I)
+#                        tot = gmf.sum(axis=0)  # shape (I,)
+#                        for i, val in enumerate(tot):
+#                            gmdata[i] += val
+#                        dispf = disp_array[:, :, n + ei]
+#                        disp_tot = dispf.sum(axis=0)
+#                        if not disp_tot.sum() and not tot.sum():
+#                            continue
+#                         
+#                        for sid, gmv, dispv in zip(sids, gmf, dispf):
+#                            if gmv.sum():
+#                                yield rlzi, sid, eid, gmv, dispv
+#                    n += e
+#            sample += len(rlzs)
 
 
 

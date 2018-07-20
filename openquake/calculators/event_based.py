@@ -19,7 +19,6 @@ import os.path
 import logging
 import collections
 import numpy
-import h5py
 
 from openquake.baselib import hdf5, datastore
 from openquake.baselib.python3compat import zip
@@ -455,7 +454,3 @@ class EventBasedCalculator(base.HazardCalculator):
                 logging.warn('Relative difference with the classical '
                              'mean curves for IMT=%s: %d%% at site index %d',
                              imt, rdiff * 100, index)
-
-
-@base.calculators.add('geotech_event_based')
-class GeotechEventBasedCalculator(base.HazardCalculator):
