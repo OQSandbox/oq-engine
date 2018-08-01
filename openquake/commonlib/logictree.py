@@ -45,7 +45,7 @@ from openquake.hazardlib.imt import from_string
 from openquake.hazardlib import geo, valid, nrml, InvalidFile
 from openquake.hazardlib.sourceconverter import (
     split_coords_2d, split_coords_3d)
-
+from openquake.hazardlib.gdem import get_available_gdems
 from openquake.baselib.node import (
     node_from_xml, striptag, node_from_elem, Node as N, context)
 
@@ -1363,7 +1363,7 @@ class GsimLogicTree(object):
                     branch_ids.append(branch_id)
                     uncertainty = branch.uncertaintyModel
                     if uncertainty.text is None:  # expect MultiGMPE
-                        with context(self.fname, uncertainty):
+                        with context(self.fname, uncertainty):    
                             gsimdict = collections.OrderedDict()
                             imts = []
                             for nod in uncertainty.getnodes('gsimByImt'):
@@ -1375,7 +1375,22 @@ class GsimLogicTree(object):
                             if len(imts) > len(gsimdict):
                                 raise InvalidLogicTree(
                                     'Found duplicated IMTs in gsimByImt')
-                            gsim = MultiGMPE(gsim_by_imt=gsimdict)
+                            if "gdemModel" in uncertainty.attrib:
+                                # Is a GDEM model
+                                gdem_model = uncertainty["gdemModel"]
+                                kw = uncertainty.attrib.copy()
+                                del(kw["gdemModel"])
+                                if "truncation" in kw:
+                                    kw["truncation"] = valid.positivefloat(
+                                        kw["truncation"])
+                                if "nsample" in kw:
+                                    kw["nsample"] = valid.positiveint(
+                                        kw["nsample"])
+                                gsim = valid.GDEM[gdem_model](
+                                    gsim_by_imt=gsimdict, **kw)
+                            else:
+                                # Is just a MultiGMPE
+                                gsim = MultiGMPE(gsim_by_imt=gsimdict)
                     elif isinstance(uncertainty.text, str):
                         uncertainty.text = gsim = self.instantiate(
                             uncertainty.text.strip(), uncertainty.attrib)

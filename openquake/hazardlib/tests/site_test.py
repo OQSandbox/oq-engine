@@ -125,7 +125,6 @@ class SiteCollectionCreationTestCase(unittest.TestCase):
         assert_eq(cll.mesh.lons, [10, -1.1999999999999886])
         assert_eq(cll.mesh.lats, [20, -3.4])
         assert_eq(cll.mesh.depths, [30, -5.6])
-        assert_eq(cll.backarc, [False, False])
 
         for arr in (cll.vs30, cll.z1pt0, cll.z2pt5):
             self.assertIsInstance(arr, numpy.ndarray)

@@ -27,7 +27,7 @@ import numpy
 
 from openquake.baselib.general import distinct
 from openquake.baselib import hdf5
-from openquake.hazardlib import imt, scalerel, gsim, pmf, site
+from openquake.hazardlib import imt, scalerel, gsim, pmf, site, gdem
 from openquake.hazardlib.gsim.gmpe_table import GMPETable
 from openquake.hazardlib.calc import disagg
 from openquake.hazardlib.calc.filters import IntegrationDistance
@@ -37,6 +37,8 @@ PRECISION = pmf.PRECISION
 SCALEREL = scalerel.get_available_magnitude_scalerel()
 
 GSIM = gsim.get_available_gsims()
+
+GDEM = gdem.get_available_gdems()
 
 
 def disagg_outputs(value):
@@ -1008,8 +1010,6 @@ def simple_slice(value):
     except Exception:
         raise ValueError('invalid slice: %s' % value)
     return (start, stop)
-
-
 
 # used for the exposure validation
 cost_type = Choice('structural', 'nonstructural', 'contents',
