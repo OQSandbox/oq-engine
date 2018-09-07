@@ -159,6 +159,7 @@ class HAZUSLiquefaction(GDEM):
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
     REQUIRES_SITES_PARAMETERS = set(("liquefaction_susceptibility",
                                      "dw", "vs30"))
+    IMT_ORDER = ["PGA",]
     
     def get_probability_failure(self, sctx, rctx, dctx):
         """
@@ -293,11 +294,11 @@ class HAZUSLiquefaction(GDEM):
         Finds the location of the necessary IMTs within the IMT list
         In this case only PGA is needed
         """
-        if not PGA() in self.imts:
+        if not "PGA" in self.imts:
             raise ValueError("HAZUS method requires calculation of PGA "
                              "but not found in imts")
 
-        return [self.imts.index(PGA())]
+        return [self.imts.index("PGA")]
         
     def get_displacement_field(self, rupture, sitecol, cmaker, num_events=1,
                                truncation_level=None, correlation_model=None):
@@ -310,7 +311,7 @@ class HAZUSLiquefaction(GDEM):
                                    [str(imt) for imt in self.imts],
                                    cmaker, truncation_level,
                                    correlation_model)
-        gmfs = gmf_computer.compute(self.gmpe, num_events, seed=None)
+        gmfs = gmf_computer.compute(self, num_events, seed=None)
         # Get the PGA field - should have the dimension [nsites, num_events]
         gmvs = gmfs[gmf_loc[0]]
         # Get site and rupture related properties
@@ -342,7 +343,7 @@ class HAZUSLiquefaction(GDEM):
             # Note that there are two intensity measures, so to speak, which
             # represent lateral spread and settlement respectively
             # Return the zero displacement fields and the GMFs
-            return displacement, gmfs
+            return displacement, gmfs, p_failure
                     
         # Some sites observe liquefaction - now to calculate lateral
         # spread and settlement
@@ -361,7 +362,7 @@ class HAZUSLiquefaction(GDEM):
         displacement[0][mask] = np.copy(lateral_spread)
         # Settlement is a simple scalar function
         displacement[1][mask] = properties["settlement"][mask]
-        return displacement, gmfs
+        return displacement, gmfs, p_failure
 
     def _check_susceptibility(self, sctx):
         """
@@ -468,6 +469,7 @@ class HAZUSLandsliding(GDEM):
     DEFINED_FOR_DEFORMATION_TYPES = set((PGDfSlope,))
     DEFINED_FOR_INTENSITY_MEASURE_TYPES = set((PGA,))
     REQUIRES_SITES_PARAMETERS = set(("landsliding_susceptibility", "vs30"))
+    IMT_ORDER = ["PGA",]
 
     def get_probability_failure(self, sctx, rctx, dctx):
         """
@@ -541,11 +543,11 @@ class HAZUSLandsliding(GDEM):
         """
         Get the ground motion values needed for the field - in this case PGA
         """
-        if not PGA() in self.imts:
+        if not "PGA" in self.imts:
             raise ValueError("HAZUS Method requires calculation of PGA "
                              "but not found in imts")
 
-        return [self.imts.index(PGA())]
+        return [self.imts.index("PGA")]
 
     def get_displacement_field(self, rupture, sitecol, cmaker, num_events=1,
                                truncation_level=None, correlation_model=None):
@@ -557,7 +559,7 @@ class HAZUSLandsliding(GDEM):
         gmf_computer = GmfComputer(rupture, sitecol, 
                                    [str(imt) for imt in self.imts],
                                    cmaker, truncation_level, correlation_model)
-        gmfs = gmf_computer.compute(self.gmpe, num_events, seed=None)
+        gmfs = gmf_computer.compute(self, num_events, seed=None)
         # Get the PGA field
         gmv = gmfs[gmf_loc[0]]
         # Return the critical acceleration and proportion of mapped area
@@ -577,7 +579,7 @@ class HAZUSLandsliding(GDEM):
         if not np.any(mask):
             # No displacement at any site - return zeros and the ground motion
             # fields
-            return displacement, gmfs
+            return displacement, gmfs, p_failure
         # If any displacement is registered then need to turn a_c into
         # array of shape [nsites, num_events]
         properties["a_c"] = np.tile(
@@ -595,7 +597,7 @@ class HAZUSLandsliding(GDEM):
         # lower bound displacement factors - as described by Equation 4-25
         displacement[0][mask] = M_PER_INCH * n_cycles * gmv[mask] *\
             np.random.uniform(e_d_lb, e_d_ub, a_c_ais.shape)
-        return displacement, gmfs
+        return displacement, gmfs, p_failure
   
     def get_yield_acceleration(self, sctx):
         """

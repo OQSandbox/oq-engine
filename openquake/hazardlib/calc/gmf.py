@@ -24,7 +24,7 @@ import numpy
 import scipy.stats
 
 from openquake.hazardlib.const import StdDev
-from openquake.hazardlib.gsim.base import ContextMaker, GeotechContextMaker
+from openquake.hazardlib.gsim.base import ContextMaker #, GeotechContextMaker
 #from openquake.hazardlib.gsim.base import ContextMaker
 from openquake.hazardlib.gsim.multi import MultiGMPE
 from openquake.hazardlib.imt import from_string
@@ -209,34 +209,12 @@ class GeotechFieldComputer(GmfComputer):
                  truncation_level=None, correlation_model=None):
         """
         Note to ensure same inputs as GmfComputer, and are not actually used
-        in the function
+                in the function
         """
-        assert isinstance(cmaker, GeotechContextMaker)
-        if len(sitecol) == 0:
-            raise ValueError('No sites')
-        #elif len(imts) == 0:
-        #    raise ValueError('No IMTs')
-        elif len(cmaker.gsims) == 0:
-            raise ValueError('No GSIMs')
-        self.rupture = rupture
-        #self.imts = [from_string(imt) for imt in imts]
+        super().__init__(rupture, sitecol, imts, cmaker, truncation_level,
+                         correlation_model)
         self.cmaker = cmaker
-        self.gsims = sorted(cmaker.gsims)
-        self.imts = [imt in self.gsims[0].imts]
-        self.truncation_level = truncation_level
-        self.correlation_model = correlation_model
-        # `rupture` can be a high level rupture object containing a low
-        # level hazardlib rupture object as a .rupture attribute
-        if hasattr(rupture, 'rupture'):
-            rupture = rupture.rupture
-        try:
-            self.sctx, self.dctx = rupture.sctx, rupture.dctx
-        except AttributeError:
-            self.sctx, self.dctx = cmaker.make_contexts(sitecol, rupture)
-        self.sids = self.sctx.sids
-        self.sites = sitecol
-        if correlation_model:  # store the filtered sitecol
-            self.sites = sitecol.filtered(self.sids)
+        self.sitecol = sitecol
 
     def compute(self, gsim, num_events, seed=None):
         """
@@ -253,10 +231,38 @@ class GeotechFieldComputer(GmfComputer):
             numpy.random.seed(seed)
         # In this particular case the GSIMs are organised by IMT in the context
         # maker
-        return gsim.get_displacement_field(self.rupture, self.sites,
+        return gsim.get_displacement_field(self.rupture, self.sitecol,
                                            self.cmaker, num_events,
                                            self.truncation_level,
                                            self.correlation_model)
+#        #assert isinstance(cmaker, GeotechContextMaker)
+#        if len(sitecol) == 0:
+#            raise ValueError('No sites')
+#        elif len(imts) == 0:
+#            raise ValueError('No IMTs')
+#        elif len(cmaker.gsims) == 0:
+#            raise ValueError('No GSIMs')
+#        self.rupture = rupture
+#        #self.imts = [from_string(imt) for imt in imts]
+#        self.cmaker = cmaker
+#        self.gsims = sorted(cmaker.gsims)
+#        self.imts = [imt in self.gsims[0].imts]
+#        self.truncation_level = truncation_level
+#        self.correlation_model = correlation_model
+#        # `rupture` can be a high level rupture object containing a low
+#        # level hazardlib rupture object as a .rupture attribute
+#        if hasattr(rupture, 'rupture'):
+#            rupture = rupture.rupture
+#        try:
+#            self.sctx, self.dctx = rupture.sctx, rupture.dctx
+#        except AttributeError:
+#            self.sctx, self.dctx = cmaker.make_contexts(sitecol, rupture)
+#        self.sids = self.sctx.sids
+#        self.sites = sitecol
+#        if correlation_model:  # store the filtered sitecol
+#            self.sites = sitecol.filtered(self.sids)
+
+
 
 
 # this is not used in the engine; it is still useful for usage in IPython

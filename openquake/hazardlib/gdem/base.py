@@ -45,9 +45,11 @@ class GDEM(MultiGMPE):
     REQUIRES_DISTANCES = set()
     REQUIRES_RUPTURE_PARAMETERS = set(("mag",))
     REQUIRES_SITES_PARAMETERS = set()
+    IMT_ORDER = []
 
     def __init__(self, gsim_by_imt, truncation=6.0, nsample=100):
         super().__init__(gsim_by_imt)
+        self.imts = []
         for imt in self.gsim_by_imt:
             self.REQUIRES_SITES_PARAMETERS = (
                 self.REQUIRES_SITES_PARAMETERS |
@@ -57,7 +59,7 @@ class GDEM(MultiGMPE):
                 self.gsim_by_imt[imt].REQUIRES_RUPTURE_PARAMETERS)
             self.REQUIRES_DISTANCES = (self.REQUIRES_DISTANCES |
                 self.gsim_by_imt[imt].REQUIRES_DISTANCES)
-
+            self.imts.append(imt)
         # Geotechnical hazard requires the definition of an integral of
         # the expected displacement conditional upon the shaking at the surface
         # As this is integrated numerically we can pre-calculate the integral
