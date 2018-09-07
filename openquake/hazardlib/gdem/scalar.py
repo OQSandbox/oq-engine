@@ -126,11 +126,11 @@ class SlopeDisplacementScalar(GDEM):
         """
         raise NotImplementedError("Not implemented for base class")
 
-    def _get_gmv_field_location(self, gmfs):
+    def _get_gmv_field_location(self):
         """
         Get the ground motion values needed for the field.
         """
-        req_imt = from_string(self.IMT_ORDER[0])
+        req_imt = self.IMT_ORDER[0]
         if not req_imt in self.imts:
             raise ValueError("%s requires calculation of %s "
                              "but not found in imts" %
@@ -149,7 +149,7 @@ class SlopeDisplacementScalar(GDEM):
         # Gets the ground motion fields
         gmf_loc = self._get_gmv_field_location()
         gmf_computer = GmfComputer(rupture, sitecol,
-                                   [str(imt) for imt in self.imts],
+                                   [str(imt) for IMT in self.IMT_ORDER],
                                    cmaker, truncation_level,
                                    correlation_model)
         gmfs = gmf_computer.compute(self.gmpe, num_events, seed=None)
@@ -167,13 +167,13 @@ class SlopeDisplacementScalar(GDEM):
         if not np.any(mask):
             # No displacement at any site - return zeros and the ground motion
             # fields
-            return displacement, gmfs
+            return displacement, gmfs, mask.astype(float)
 
         mean_disp, [stddevs] = self.get_displacement(sctx, rctx, dctx, gmv,
                                                      properties, mask)
         displacement[0][mask] = np.exp(mean_disp +
                                        np.random.normal(0., 1.) * stddevs)
-        return displacement, gmfs
+        return displacement, gmfs, mask.astype(float)
         
 
 class Jibson2007PGA(SlopeDisplacementScalar):
