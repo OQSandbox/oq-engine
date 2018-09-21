@@ -30,7 +30,7 @@ from openquake.hazardlib import valid, InvalidFile
 from openquake.commonlib import logictree
 from openquake.risklib.riskmodels import get_risk_files
 
-GROUND_MOTION_CORRELATION_MODELS = ['JB2009']
+GROUND_MOTION_CORRELATION_MODELS = ['JB2009', 'HM2018']
 TWO16 = 2 ** 16  # 65536
 U16 = numpy.uint16
 U32 = numpy.uint32
@@ -86,6 +86,7 @@ class OqParam(valid.ParamSet):
     ignore_missing_costs = valid.Param(valid.namelist, [])
     ignore_covs = valid.Param(valid.boolean, False)
     iml_disagg = valid.Param(valid.floatdict, {})  # IMT -> IML
+    individual_curves = valid.Param(valid.boolean, True)
     inputs = valid.Param(dict, {})
     insured_losses = valid.Param(valid.boolean, False)
     intensity_measure_types = valid.Param(valid.intensity_measure_types, None)
@@ -142,6 +143,8 @@ class OqParam(valid.ParamSet):
     sites_slice = valid.Param(valid.simple_slice, (None, None))
     sm_lt_path = valid.Param(valid.logic_tree_path, None)
     specific_assets = valid.Param(valid.namelist, [])
+    nodal_dist_collapsing_distance = valid.Param(valid.positivefloat, None)
+    hypo_dist_collapsing_distance = valid.Param(valid.positivefloat, None)
     taxonomies_from_model = valid.Param(valid.boolean, False)
     time_event = valid.Param(str, None)
     truncation_level = valid.Param(valid.NoneOr(valid.positivefloat), None)
@@ -166,10 +169,10 @@ class OqParam(valid.ParamSet):
 
     def get_reqv(self):
         """
-        :returns: an instance of class:`RepiEquivalent` if reqv_hdf5 is set
+        :returns: an instance of class:`RjbEquivalent` if reqv_hdf5 is set
         """
         if 'reqv' in self.inputs:
-            return valid.RepiEquivalent(self.inputs['reqv'])
+            return valid.RjbEquivalent(self.inputs['reqv'])
 
     def __init__(self, **names_vals):
         super().__init__(**names_vals)
@@ -233,17 +236,6 @@ class OqParam(valid.ParamSet):
         elif self.gsim is not None:
             self.check_gsims([self.gsim])
 
-        # checks for hazard outputs
-        if not self.hazard_stats():
-            if self.uniform_hazard_spectra:
-                raise InvalidFile(
-                    '%(job_ini)s: uniform_hazard_spectra=true is inconsistent '
-                    'with mean_hazard_curves=false' % self.inputs)
-            elif self.hazard_maps:
-                raise InvalidFile(
-                    '%(job_ini)s: hazard_maps=true is inconsistent '
-                    'with mean_hazard_curves=false' % self.inputs)
-
         # checks for disaggregation
         if self.calculation_mode == 'disaggregation':
             if not self.poes_disagg and not self.iml_disagg:
@@ -293,7 +285,7 @@ class OqParam(valid.ParamSet):
         """
         :param gsims: a sequence of GSIM instances
         """
-        imts = set('SA' if imt.startswith('SA') else imt for imt in self.imtls)
+        imts = set(from_string(imt).name for imt in self.imtls)
         for gsim in gsims:
             if hasattr(gsim, "DEFINED_FOR_DEFORMATION_TYPES"):
                 restrict_imts = gsim.DEFINED_FOR_DEFORMATION_TYPES
@@ -694,6 +686,20 @@ class OqParam(valid.ParamSet):
             self.complex_fault_mesh_spacing = self.rupture_mesh_spacing
         return True
 
+    def is_valid_optimize_same_id_sources(self):
+        """
+        The `optimize_same_id_sources` can be true only in the classical
+        calculators.
+        """
+        if (self.optimize_same_id_sources and
+                'classical' in self.calculation_mode or
+                'disagg' in self.calculation_mode):
+            return True
+        elif self.optimize_same_id_sources:
+            return False
+        else:
+            return True
+
     def check_uniform_hazard_spectra(self):
         ok_imts = [imt for imt in self.imtls if imt == 'PGA' or
                    imt.startswith('SA')]
@@ -702,8 +708,9 @@ class OqParam(valid.ParamSet):
                              'if the IMT set contains SA(...) or PGA, got %s'
                              % list(self.imtls))
         elif len(ok_imts) == 1:
-            raise ValueError(
-                'There is a single IMT, uniform_hazard_spectra cannot be True')
+            logging.warn(
+                'There is a single IMT, the uniform_hazard_spectra plot will '
+                'contain a single point')
 
     def check_source_model(self):
         if ('hazard_curves' in self.inputs or 'gmfs' in self.inputs or
