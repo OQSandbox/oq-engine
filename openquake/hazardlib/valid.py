@@ -263,7 +263,7 @@ class SimpleId(object):
             "Invalid ID '%s': the only accepted chars are a-zA-Z0-9_-" % value)
 
 
-MAX_ID_LENGTH = 60
+MAX_ID_LENGTH = 75  # length required for some sources in US14 collapsed model
 ASSET_ID_LENGTH = 100
 
 simple_id = SimpleId(MAX_ID_LENGTH)
@@ -274,14 +274,21 @@ nice_string = SimpleId(  # nice for Windows, Linux, HDF5 and XML
 
 
 class FloatRange(object):
-    def __init__(self, minrange, maxrange, name=''):
+    def __init__(self, minrange, maxrange, name='', accept=None):
         self.minrange = minrange
         self.maxrange = maxrange
         self.name = name
+        self.accept = accept
         self.__name__ = 'FloatRange[%s:%s]' % (minrange, maxrange)
 
     def __call__(self, value):
-        f = float_(value)
+        try:
+            f = float_(value)
+        except ValueError:  # passed a string
+            if value == self.accept:
+                return value
+            else:
+                raise
         if f > self.maxrange:
             raise ValueError("%s %s is bigger than the maximum (%s)" %
                              (self.name, f, self.maxrange))
@@ -665,12 +672,13 @@ def intensity_measure_types(value):
     return imts
 
 
-def check_levels(imls, imt):
+def check_levels(imls, imt, min_iml=1E-10):
     """
     Raise a ValueError if the given levels are invalid.
 
     :param imls: a list of intensity measure and levels
     :param imt: the intensity measure type
+    :param min_iml: minimum intensity measure level (default 1E-10)
 
     >>> check_levels([0.1, 0.2], 'PGA')  # ok
     >>> check_levels([], 'PGA')
@@ -692,6 +700,11 @@ def check_levels(imls, imt):
         raise ValueError('The imls for %s are not sorted: %s' % (imt, imls))
     elif len(distinct(imls)) < len(imls):
         raise ValueError("Found duplicated levels for %s: %s" % (imt, imls))
+    elif imls[0] == 0 and imls[1] <= min_iml:  # apply the cutoff
+        raise ValueError("The min_iml %s=%s is larger than the second level "
+                         "for %s" % (imt, min_iml, imls))
+    elif imls[0] == 0 and imls[1] > min_iml:  # apply the cutoff
+        imls[0] = min_iml
 
 
 def intensity_measure_types_and_levels(value):
@@ -941,10 +954,10 @@ def point3d(value, lon, lat, depth):
     return longitude(lon), latitude(lat), positivefloat(depth)
 
 
-strike_range = FloatRange(0, 360)
-slip_range = strike_range
-dip_range = FloatRange(0, 90)
-rake_range = FloatRange(-180, 180)
+strike_range = FloatRange(0, 360, 'strike')
+slip_range = FloatRange(0, 360, 'slip')
+dip_range = FloatRange(0, 90, 'dip')
+rake_range = FloatRange(-180, 180, 'rake', 'undefined')
 
 
 def ab_values(value):
@@ -1198,11 +1211,11 @@ class ParamSet(hdf5.LiteralAttrs, metaclass=MetaParamSet):
             yield item
 
 
-class RepiEquivalent(object):
+class RjbEquivalent(object):
     """
-    A class to compute the equivalent epicentral distance. Usage:
+    A class to compute the equivalent Rjb distance. Usage:
 
-    >> reqv = RepiEquivalent('lookup.hdf5')
+    >> reqv = RjbEquivalent('lookup.hdf5')
     >> reqv.get(repi_distances, mag)
     """
     def __init__(self, hdf5path):
