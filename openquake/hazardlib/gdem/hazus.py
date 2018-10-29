@@ -315,7 +315,7 @@ class HAZUSLiquefaction(GDEM):
         # Get the PGA field - should have the dimension [nsites, num_events]
         gmvs = gmfs[gmf_loc[0]]
         # Get site and rupture related properties
-        properties = self._setup_properties(sitecol,
+        properties = self._setup_properties(gmf_computer.sctx,
                                             gmf_computer.rupture)
 
         # Determine the probability of failure
@@ -330,11 +330,11 @@ class HAZUSLiquefaction(GDEM):
          
         p_failure = np.zeros_like(gmvs)
         for j in range(p_failure.shape[1]):
-            p_failure[:, j] = self.get_failure_model(sitecol,
+            p_failure[:, j] = self.get_failure_model(gmf_computer.sctx,
                                                      gmvs[:, j],
                                                      properties) 
         # Setup displacement field
-        displacement = np.zeros([2, len(gmf_computer.sids), num_events],
+        displacement = np.zeros([2, len(gmf_computer.sctx.sids), num_events],
                                 dtype=np.float32)
         # Sample the field
         mask = np.random.uniform(0., 1., p_failure.shape) <= p_failure
@@ -563,7 +563,7 @@ class HAZUSLandsliding(GDEM):
         # Get the PGA field
         gmv = gmfs[gmf_loc[0]]
         # Return the critical acceleration and proportion of mapped area
-        properties = self._setup_properties(sitecol,
+        properties = self._setup_properties(gmf_computer.sctx,
                                             gmf_computer.rupture)
         # Get probability of failure. If PGA < a_c, no failure is possible,
         # whilst for PGA > a_c the probability of any individual location
@@ -574,7 +574,7 @@ class HAZUSLandsliding(GDEM):
                                                    properties["a_c"])
         # Sample the occurence of landsliding.
         mask = np.random.uniform(0., 1., p_failure.shape) <= p_failure
-        displacement = np.zeros([1, len(gmf_computer.sids), num_events],
+        displacement = np.zeros([1, len(gmf_computer.sctx.sids), num_events],
                                  dtype=np.float32)
         if not np.any(mask):
             # No displacement at any site - return zeros and the ground motion
