@@ -162,7 +162,7 @@ class SlopeDisplacementScalar(GDEM):
         properties["a_c"] = np.tile(
             np.reshape(properties["a_c"], [n, 1]), [1, num_events]) 
         mask = gmv >= properties["a_c"]
-        displacement = np.zeros([1, len(gmf_computer.sids), num_events],
+        displacement = np.zeros([1, len(gmf_computer.sctx.sids), num_events],
                                  dtype=np.float32)
         if not np.any(mask):
             # No displacement at any site - return zeros and the ground motion

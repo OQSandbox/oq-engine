@@ -61,4 +61,4 @@ class ZhuEtAl2015Global(HAZUSLiquefaction):
         """
         model = 24.10 + 2.067 * np.log(gmv) + 0.355 * sctx.cti +\
             -4.784 * np.log(sctx.vs30)
-        return 1. / (1.0 + np.exp(model))
+        return 1. / (1.0 + np.exp(-model))
